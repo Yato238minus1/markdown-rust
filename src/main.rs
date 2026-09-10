@@ -1,3 +1,4 @@
+pub mod markdown;
 pub mod vault;
 
 fn main() {
