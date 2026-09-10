@@ -69,18 +69,34 @@ for the folder-picker dialog (present on virtually all desktop distros).
 
 | Keys | Action |
 |---|---|
-| `Ctrl+O` | Open vault folder |
-| `Ctrl+P` | Quick switcher (fuzzy note jump) |
-| `Ctrl+K` | Command palette |
-| `Ctrl+N` | New note (folders allowed, e.g. `ideas/foo`) |
-| `Ctrl+S` | Save now (autosave also runs 0.8 s after typing) |
-| `Ctrl+E` | Toggle live preview |
+| `Ctrl+O` | Vault-Ordner öffnen |
+| `Ctrl+P` | Schnellwechsler (Fuzzy-Notizsprung) |
+| `Ctrl+K` | Befehlspalette |
+| `Ctrl+N` | Neue Notiz (Unterordner erlaubt, z.B. `ideen/foo`) |
+| `Ctrl+S` | Jetzt speichern (Autosave zusätzlich 0,8 s nach Tippen) |
+| `Ctrl+E` | Live-Vorschau umschalten |
 | `Ctrl+Shift+F` | Vault-weite Suche |
 | `Ctrl+Shift+S` | Einstellungen |
+| `Ctrl+W` | Aktuelle Notiz schließen |
+| `Ctrl+↑` / `Ctrl+↓` | Vorherige / Nächste Notiz |
+| `Ctrl+Shift+G` | Glossar umschalten |
+| `Ctrl+Shift+Y` | Synchronisiertes Scrollen umschalten |
+
+Alle Belegungen sind in den Einstellungen frei änderbar (Klick auf „Ändern",
+dann Taste drücken; `Escape` bricht ab). Fehlende Keybinds in alten Configs
+werden automatisch mit der Standard-Belegung aufgefüllt.
 
 ## Features
 
 - Live Markdown syntax highlighting while you type
+- **Editor-Codeblöcke**: ` ``` ` -Blöcke werden im Editor mit syntect
+  (Sprachautodetektion) farbig hervorgehoben
+- **Klickbare Wikilinks im Editor**: `Strg+Klick` / Mittelklick auf eine
+  `[[Ziel]]`-Referenz öffnet die Zielnotiz direkt
+- **Strg+Hover-Popup**: zeigt beim Zeigen auf eine `[[Ziel]]`-Referenz eine
+  Vorschau der Zielnotiz (inkl. „Notiz erstellen", falls das Ziel fehlt)
+- **Synchronisiertes Scrollen**: Editor und Vorschau scrollen gemeinsam;
+  per `Strg+Shift+Y` oder Checkbox in den Einstellungen ein-/ausschaltbar
 - Live rendered preview (CommonMark + strikethrough + tables) via egui_commonmark
 - YAML front matter (title, tags) parsed and shown in preview
 - `[[Wikilinks]]` with exact-stem then case-insensitive substring resolution
