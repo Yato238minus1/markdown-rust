@@ -1,3 +1,5 @@
+pub mod vault;
+
 fn main() {
     let native_options = eframe::NativeOptions::default();
     eframe::run_native(
