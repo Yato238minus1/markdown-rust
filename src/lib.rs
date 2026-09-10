@@ -6,6 +6,7 @@ pub mod editor_links;
 pub mod glossary;
 pub mod i18n;
 pub mod markdown;
+pub mod preview_sync;
 pub mod search;
 pub mod settings;
 pub mod vault;

@@ -32,7 +32,7 @@ impl Default for CodeHighlighter {
 pub struct ColorSpan {
     pub start: usize,
     pub end: usize,
-    pub farbe: [u8; 4],
+    pub color: [u8; 4],
 }
 
 impl CodeHighlighter {
@@ -56,7 +56,7 @@ impl CodeHighlighter {
                 return if code.is_empty() {
                     Vec::new()
                 } else {
-                    vec![ColorSpan { start: 0, end: code.len(), farbe: [152, 206, 206, 255] }]
+                    vec![ColorSpan { start: 0, end: code.len(), color: [152, 206, 206, 255] }]
                 };
             }
         };
@@ -72,16 +72,16 @@ impl CodeHighlighter {
                     let end = start + text.len();
                     cursor = end;
                     let c = stil.foreground;
-                    let farbe = [c.r, c.g, c.b, c.a];
+                    let color = [c.r, c.g, c.b, c.a];
                     if end > start {
                         // Gleiche Farbe aneinander hängen (weniger Spans).
                         if let Some(letzte) = out.last_mut() {
-                            if letzte.farbe == farbe && letzte.end == start {
+                            if letzte.color == color && letzte.end == start {
                                 letzte.end = end;
                                 continue;
                             }
                         }
-                        out.push(ColorSpan { start, end, farbe });
+                        out.push(ColorSpan { start, end, color });
                     }
                 }
             } else {
@@ -89,7 +89,7 @@ impl CodeHighlighter {
                 out.push(ColorSpan {
                     start: cursor,
                     end: code.len(),
-                    farbe: [152, 206, 206, 255],
+                    color: [152, 206, 206, 255],
                 });
                 break;
             }
@@ -108,7 +108,7 @@ mod tests {
         let spans = h.highlight("let x = 1;\nfn main() {}\n", "rust");
         // Mindestens 2 verschiedene Farben + mehrere Spans:
         assert!(spans.len() >= 3, "nur {} Spans", spans.len());
-        let farben: std::collections::HashSet<_> = spans.iter().map(|s| s.farbe).collect();
+        let farben: std::collections::HashSet<_> = spans.iter().map(|s| s.color).collect();
         assert!(farben.len() >= 2, "zu wenig Farbvielfalt");
     }
 

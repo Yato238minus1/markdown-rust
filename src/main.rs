@@ -5,7 +5,7 @@ use rusty_notes::{
     settings::{Action, SettingsManager, Settings, Keybind},
     glossary::{self, Glossary},
     i18n::{self, Language, Texts},
-    markdown, search, vault,
+    markdown, preview_sync, search, vault,
 };
 
 use std::path::PathBuf;
@@ -82,19 +82,21 @@ struct App {
     recording_keybind: Option<Action>,
     /// Strg+Hover: (Zielnotiz, Bildschirmposition) für das Popup.
     hover_link: Option<(String, egui::Pos2)>,
-    /// Sync-Scroll: letzter geteilter Scroll-Stand der Editor-/Vorschau-Ansicht.
-    sync_scroll: f32,
-    /// Letzter Sync-Anteil, um Editor-Änderungen zu erkennen (Some = geändert).
-    sync_last: Option<f32>,
-    /// True im Frame nach einer Editor-Scroll-Änderung.
-    sync_changed: bool,
-    /// Letzte gemessene Vorschau-Maße (content, visible) für Ziel-Offset-Berechnung.
-    preview_measure: PreviewMeasure,
-}
-
-#[derive(Default)]
-struct PreviewMeasure {
-    last: Option<(f32, f32)>,
+    /// Sync anchor: full-text source byte shown at the top of BOTH panes.
+    sync_anchor: usize,
+    /// True when the editor moved and the preview must follow this frame.
+    sync_drive: bool,
+    /// Text hash the editor side last synced on (detects edits).
+    sync_editor_hash: u64,
+    /// Last editor scroll offset (detects user scrolling).
+    sync_last_editor_off: Option<f32>,
+    /// Note the anchor belongs to (reset on switch).
+    sync_note: Option<PathBuf>,
+    /// Cached byte->Y maps (rebuilt on text/width/font change only).
+    editor_map: Option<preview_sync::MapCache>,
+    preview_map: Option<preview_sync::MapCache>,
+    /// Last measured preview inner width (exact wrap width for next frame).
+    preview_inner_w: f32,
 }
 
 impl Default for App {
@@ -121,10 +123,14 @@ impl Default for App {
             glossary: None,
             recording_keybind: None,
             hover_link: None,
-            sync_scroll: 0.0,
-            sync_last: None,
-            sync_changed: false,
-            preview_measure: PreviewMeasure::default(),
+            sync_anchor: 0,
+            sync_drive: false,
+            sync_editor_hash: 0,
+            sync_last_editor_off: None,
+            sync_note: None,
+            editor_map: None,
+            preview_map: None,
+            preview_inner_w: 0.0,
         }
         .with_last_vault(last_vault)
     }
@@ -162,8 +168,8 @@ impl App {
     /// Löst einen Wikilink-Text ([[Ziel]]) auf einen existierenden Notizpfad auf.
     fn note_for_wikilink(&self, target: &str) -> Option<PathBuf> {
         let v = self.vault.as_ref()?;
-        let pfade: Vec<PathBuf> = v.notes().iter().map(|n| n.abs.clone()).collect();
-        markdown::resolve_wikilink(pfade.iter().map(|p| p.as_path()), target)
+        let paths: Vec<PathBuf> = v.notes().iter().map(|n| n.abs.clone()).collect();
+        markdown::resolve_wikilink(paths.iter().map(|p| p.as_path()), target)
     }
 
     /// Glossary aus allen Notiz-Stems neu aufbauen (nur bei Vault-Änderung).
@@ -380,13 +386,13 @@ impl App {
             return;
         }
         if let Some(v) = self.vault.as_mut() {
-            let pfade: Vec<(PathBuf, String)> = v
+            let paths: Vec<(PathBuf, String)> = v
                 .notes()
                 .iter()
                 .map(|n| (n.abs.clone(), n.rel.clone()))
                 .collect();
-            let mut pairs: Vec<(String, String)> = Vec::with_capacity(pfade.len());
-            for (abs, rel) in &pfade {
+            let mut pairs: Vec<(String, String)> = Vec::with_capacity(paths.len());
+            for (abs, rel) in &paths {
                 if let Ok(content) = v.content_for(abs) {
                     pairs.push((rel.clone(), content));
                 }
@@ -484,7 +490,7 @@ impl eframe::App for App {
                 Some(target)
             };
             match target {
-                Some(pfad) if pfad.exists() => self.open_note(pfad),
+                Some(path) if path.exists() => self.open_note(path),
                 _ => self.status = txt.status_note_not_found(),
             }
         }
@@ -873,8 +879,12 @@ impl App {
 
         let editor_id = egui::Id::new(("editor", path.clone()));
 
+        // Exact wrap width, reported by TextEdit itself (no margin guessing).
+        let wrap_seen = std::rc::Rc::new(std::cell::Cell::new(0.0f32));
+        let wrap_seen_in = wrap_seen.clone();
         let mut layouter =
             move |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+                wrap_seen_in.set(wrap_width);
                 let txt = buf.as_str();
                 let spans = highlight(txt);
                 let pieces: Vec<(usize, usize, glossary::Style)> =
@@ -884,92 +894,92 @@ impl App {
                 // Codeblöcke mit syntect einfärben. Dank korrigierter
                 // Fence-Spans ist jeder Block EINE zusammenhängende Span
                 // "```info\n...```". Inhalt = nach erster Zeile bis vor "```".
-                let mut code_farben: Vec<(usize, usize, [u8; 4])> = Vec::new();
+                let mut code_colors: Vec<(usize, usize, [u8; 4])> = Vec::new();
                 for s in spans.iter() {
                     if s.tok != Tok::CodeBlock {
                         continue;
                     }
                     let block = &txt[s.start..s.end];
-                    let Some(zeile_ende) = block.find('\n') else {
+                    let Some(line_end) = block.find('\n') else {
                         continue; // einzeiliger Fence ohne Inhalt
                     };
-                    let info = block[3..zeile_ende].trim();
+                    let info = block[3..line_end].trim();
                     // Inhalt: nach Infostring bis vor dem schließenden ``` .
                     // Die Fence-Span endet exakt auf dem schließenden "```" (siehe
                     // editor.rs), also drei Bytes vor block.ende.
-                    let fence_ende = block.len().saturating_sub(3);
-                    let inhalt = &block[zeile_ende + 1..fence_ende]
+                    let fence_end = block.len().saturating_sub(3);
+                    let content = &block[line_end + 1..fence_end]
                         .strip_suffix('\n')
-                        .unwrap_or(&block[zeile_ende + 1..fence_ende]);
-                    let basis = s.start + zeile_ende + 1;
+                        .unwrap_or(&block[line_end + 1..fence_end]);
+                    let base = s.start + line_end + 1;
                     if info.is_empty() {
                         continue; // ohne Sprache: Standardfarbe belassen
                     }
-                    for f in CODE_HIGHLIGHTER.highlight(inhalt, info) {
-                        code_farben.push((basis + f.start, basis + f.end, f.farbe));
+                    for f in CODE_HIGHLIGHTER.highlight(content, info) {
+                        code_colors.push((base + f.start, base + f.end, f.color));
                     }
                 }
 
                 // Stückelung mit Code-Farbgrenzen verschneiden:
-                let mut final_stuecke: Vec<(usize, usize, Color32)> = Vec::new();
-                for (s, e, stil) in pieces {
-                    if stil != glossary::Style::Token(Tok::CodeBlock) {
-                        let farbe = match stil {
+                let mut final_pieces: Vec<(usize, usize, Color32)> = Vec::new();
+                for (s, e, style) in pieces {
+                    if style != glossary::Style::Token(Tok::CodeBlock) {
+                        let color = match style {
                             glossary::Style::Glossary => GLOSSARY_COLOR,
                             glossary::Style::Token(tok) => tok_color(tok),
                         };
-                        final_stuecke.push((s, e, farbe));
+                        final_pieces.push((s, e, color));
                         continue;
                     }
                     // CodeBlock-Abschnitt in syntect-Farben zerlegen:
                     let mut cursor = s;
                     while cursor < e {
                         // Passende Farbspanne am cursor finden:
-                        let mut naechste_grenze = e;
-                        let mut farbe = tok_color(Tok::CodeBlock);
-                        for (fs, fe, f) in &code_farben {
+                        let mut next_bound = e;
+                        let mut color = tok_color(Tok::CodeBlock);
+                        for (fs, fe, f) in &code_colors {
                             if *fs <= cursor && cursor < *fe {
-                                farbe = Color32::from_rgba_unmultiplied(f[0], f[1], f[2], f[3]);
-                                naechste_grenze = (*fe).min(e);
+                                color = Color32::from_rgba_unmultiplied(f[0], f[1], f[2], f[3]);
+                                next_bound = (*fe).min(e);
                                 break;
                             }
                         }
-                        if naechste_grenze == e && farbe == tok_color(Tok::CodeBlock) {
+                        if next_bound == e && color == tok_color(Tok::CodeBlock) {
                             // cursor liegt zwischen syntect-Spans: bis zur nächsten Spanne
-                            let mut grenze = e;
-                            for (fs, _fe, f) in &code_farben {
-                                if *fs > cursor && *fs < grenze {
-                                    grenze = *fs;
-                                    farbe = Color32::from_rgba_unmultiplied(f[0], f[1], f[2], f[3]);
+                            let mut bound = e;
+                            for (fs, _fe, f) in &code_colors {
+                                if *fs > cursor && *fs < bound {
+                                    bound = *fs;
+                                    color = Color32::from_rgba_unmultiplied(f[0], f[1], f[2], f[3]);
                                 }
                             }
-                            naechste_grenze = grenze;
-                            if grenze == e {
-                                farbe = tok_color(Tok::CodeBlock);
+                            next_bound = bound;
+                            if bound == e {
+                                color = tok_color(Tok::CodeBlock);
                             } else {
                                 // Farbe der kommenden Spanne übernehmen:
-                                for (fs, fe, f) in &code_farben {
-                                    if *fs == grenze {
-                                        farbe = Color32::from_rgba_unmultiplied(f[0], f[1], f[2], f[3]);
-                                        naechste_grenze = (*fe).min(e);
+                                for (fs, fe, f) in &code_colors {
+                                    if *fs == bound {
+                                        color = Color32::from_rgba_unmultiplied(f[0], f[1], f[2], f[3]);
+                                        next_bound = (*fe).min(e);
                                         break;
                                     }
                                 }
                             }
                         }
-                        if naechste_grenze > cursor {
-                            final_stuecke.push((cursor, naechste_grenze, farbe));
-                            cursor = naechste_grenze;
+                        if next_bound > cursor {
+                            final_pieces.push((cursor, next_bound, color));
+                            cursor = next_bound;
                         } else {
                             break; // Sicherheit gegen Endlosschleife
                         }
                     }
                 }
 
-                for (s, e, farbe) in final_stuecke {
+                for (s, e, color) in final_pieces {
                     let fmt = egui::TextFormat::simple(
                         egui::FontId::monospace(font_size),
-                        farbe,
+                        color,
                     );
                     job.append(&txt[s..e], 0.0, fmt);
                 }
@@ -984,10 +994,10 @@ impl App {
             .desired_width(f32::INFINITY)
             .id(editor_id);
 
-        // Sync-Scroll: Editor in ScrollArea; der Stand wird als Anteil 0..1
-        // gespeichert und von ui_preview auf die Vorschau übertragen.
+        // Editor in a ScrollArea; ui_editor records the top visible source byte
+        // as the shared sync anchor below.
         let scroll_id = egui::Id::new(("editor_scroll", path.clone()));
-        let mut geaendert = false;
+        let mut changed = false;
         let scroll_out = egui::ScrollArea::vertical()
             .id_salt(scroll_id)
             .auto_shrink([false, false])
@@ -1002,47 +1012,94 @@ impl App {
                 // ---- Link-Interaktion: Klick + Strg+Hover ----
                 self.interact_editor_links(&te_out, text_len);
 
-                geaendert = editor_resp.changed();
+                changed = editor_resp.changed();
             });
 
-        if geaendert {
+        // Content-anchored sync prep BEFORE `text` moves into the vault below.
+        let off_y = scroll_out.state.offset.y;
+        let seen_wrap = wrap_seen.get();
+        let edit_w = if seen_wrap > 0.0 {
+            seen_wrap
+        } else {
+            scroll_out.inner_rect.width().max(1.0)
+        };
+        let sync_active = self.settings.values.sync_scroll && self.preview_visible;
+        let text_hash = preview_sync::hash_text(&text);
+        let text_len_now = text.len();
+        if sync_active {
+            let width_q = edit_w.round() as u32;
+            let font_bits = font_size.to_bits() as u64;
+            let rebuild = match &self.editor_map {
+                Some(c) => c.hash != text_hash || c.width != width_q || c.fonts != font_bits,
+                None => true,
+            };
+            if rebuild {
+                let map = preview_sync::build_editor_map(
+                    ui.ctx(),
+                    &text,
+                    font_size,
+                    edit_w,
+                );
+                self.editor_map = Some(preview_sync::MapCache {
+                    hash: text_hash,
+                    width: width_q,
+                    fonts: font_bits,
+                    map,
+                    ..Default::default()
+                });
+            }
+        }
+
+        if changed {
             if let Some(v) = self.vault.as_mut() {
                 let _ = v.set_text(&path, text);
             }
             self.mark_dirty_timer();
-        } else if !text.is_empty() {
+        } else if text_len_now > 0 {
             // text zurückgeben, damit der Puffer konsistent bleibt (kein Op nötig)
         }
 
-        let anteil_vor_frame = self.sync_last;
-        let visible = scroll_out.inner_rect.height();
-        if scroll_out.content_size.y > visible && visible > 0.0 {
-            self.sync_scroll =
-                (scroll_out.state.offset.y / (scroll_out.content_size.y - visible))
-                    .clamp(0.0, 1.0);
+        // Anchor from the (possibly rebuilt) map; no `text` use after move.
+        if sync_active {
+            if self.sync_note.as_ref() != Some(&path) {
+                self.sync_note = Some(path.clone());
+                self.sync_anchor = 0;
+            }
+            let anchor = self
+                .editor_map
+                .as_ref()
+                .map(|c| preview_sync::byte_at_y(&c.map, off_y))
+                .unwrap_or(0);
+            let text_changed = text_hash != self.sync_editor_hash;
+            let user_scrolled = self
+                .sync_last_editor_off
+                .map_or(false, |last| (off_y - last).abs() > 0.5);
+            self.sync_drive = user_scrolled || text_changed || anchor != self.sync_anchor;
+            self.sync_anchor = anchor.min(text_len_now);
+            self.sync_editor_hash = text_hash;
+        } else {
+            self.sync_drive = false;
         }
-        self.sync_changed =
-            anteil_vor_frame.map_or(true, |vor| (vor - self.sync_scroll).abs() > 0.001);
-        self.sync_last = Some(self.sync_scroll);
+        self.sync_last_editor_off = Some(off_y);
     }
 
     /// Sammelt Notizpfad + erste Zeilen für das Hover-Popup (kein UI-Borrow).
     fn hover_preview(&self, target: &str) -> Option<(PathBuf, Vec<String>)> {
         let v = self.vault.as_ref()?;
-        let pfade: Vec<PathBuf> = v.notes().iter().map(|n| n.abs.clone()).collect();
-        let pfad = markdown::resolve_wikilink(pfade.iter().map(|p| p.as_path()), target)?;
-        let inhalt = v
-            .buffer(&pfad)
+        let paths: Vec<PathBuf> = v.notes().iter().map(|n| n.abs.clone()).collect();
+        let path = markdown::resolve_wikilink(paths.iter().map(|p| p.as_path()), target)?;
+        let content = v
+            .buffer(&path)
             .map(|b| b.text.clone())
-            .or_else(|| std::fs::read_to_string(&pfad).ok())?;
-        let (_fm, body) = markdown::split_front_matter(&inhalt);
+            .or_else(|| std::fs::read_to_string(&path).ok())?;
+        let (_fm, body) = markdown::split_front_matter(&content);
         let zeilen: Vec<String> = body
             .lines()
             .filter(|l| !l.trim().is_empty())
             .take(4)
             .map(|l| l.trim_start_matches('#').trim().to_string())
             .collect();
-        Some((pfad, zeilen))
+        Some((path, zeilen))
     }
 
     /// Ermittelt den Wikilink unter der Maus: Strg+Hover zeigt ein Popup,
@@ -1086,8 +1143,8 @@ impl App {
             || (ctrl && response.clicked_by(egui::PointerButton::Primary));
         if clicked {
             if let Some(l) = link {
-                if let Some(pfad) = self.note_for_wikilink(&l.target) {
-                    self.pending_link = Some(pfad);
+                if let Some(path) = self.note_for_wikilink(&l.target) {
+                    self.pending_link = Some(path);
                 } else {
                     self.status = format!("Ziel '{}' nicht gefunden", l.target);
                 }
@@ -1111,8 +1168,8 @@ impl App {
         let (fm_raw, body) = markdown::split_front_matter(&buf.text);
 
         // Wikilink-Ziele einmalig auflösen (vor dem UI-Block, kein Borrow-Konflikt).
-        let ziele: Vec<String> = markdown::extract_wikilinks(body);
-        let ziel_pfade: Vec<(String, PathBuf)> = ziele
+        let targets: Vec<String> = markdown::extract_wikilinks(body);
+        let target_paths: Vec<(String, PathBuf)> = targets
             .iter()
             .filter_map(|z| {
                 let (target, _) = z.split_once('|').unwrap_or((z.as_str(), ""));
@@ -1121,27 +1178,83 @@ impl App {
             })
             .collect();
 
-        // Sync-Scroll: Vorschau übernimmt den Anteil des Editors, solange aktiv
-        // und der Editor seit letztem Frame seinen Anteil geändert hat.
-        let anteil = self.sync_scroll;
-        let mut ziel_offset = None;
-        if self.settings.values.sync_scroll && self.sync_changed {
-            if let Some((content, visible)) = self.preview_measure.last {
-                ziel_offset = Some(anteil * (content - visible).max(0.0));
-            }
-        }
+        // Front matter once for rendering AND sync measuring.
+        let fm = fm_raw.map(|raw| markdown::parse_front_matter(raw));
+
+        // Content-anchored sync: place the shared anchor byte at the preview
+        // top. (The editor runs after us, so we follow last frame's anchor.)
         let mut preview_builder = egui::ScrollArea::vertical().id_salt("preview_scroll");
-        if let Some(target) = ziel_offset {
-            preview_builder = preview_builder.vertical_scroll_offset(target);
+        if self.settings.values.sync_scroll && self.sync_drive {
+            let ctx = ui.ctx().clone();
+            // Exact wrap width: what the renderer saw last frame (its
+            // max_width == inner ScrollArea width). First frames fall back
+            // to a guess; 2px hysteresis avoids scrollbar-toggle rebuilds.
+            let avail_w = if self.preview_inner_w > 0.0 {
+                self.preview_inner_w
+            } else {
+                (ui.available_width() - 8.0).max(1.0)
+            };
+            let width_q = avail_w.round() as u32;
+            let style = ctx.global_style();
+            let body_bits = style
+                .text_styles
+                .get(&egui::TextStyle::Body)
+                .map(|f| f.size.to_bits())
+                .unwrap_or(0) as u64;
+            let head_bits = style
+                .text_styles
+                .get(&egui::TextStyle::Heading)
+                .map(|f| f.size.to_bits())
+                .unwrap_or(0) as u64;
+            let fonts = (body_bits << 32) | head_bits;
+            let hash = preview_sync::hash_text(&buf.text);
+            let rebuild = match &self.preview_map {
+                Some(c) => {
+                    c.hash != hash || (c.width as f32 - avail_w).abs() > 2.0 || c.fonts != fonts
+                }
+                None => true,
+            };
+            if rebuild {
+                let mut owned: Vec<String> = Vec::new();
+                if fm.is_some() {
+                    owned.push(txt.front_matter.to_string());
+                    if let Some(t) = fm.as_ref().and_then(|f| f.title.clone()) {
+                        owned.push(format!("{} {}", txt.title_label, t));
+                    }
+                    if let Some(f) = fm.as_ref() {
+                        if !f.tags.is_empty() {
+                            owned.push(format!("{} {}", txt.tags_label, f.tags.join(", ")));
+                        }
+                    }
+                }
+                let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+                let extra = preview_sync::header_extra_height(&ctx, &refs, avail_w);
+                let map = preview_sync::build_preview_map(&ctx, body, avail_w);
+                let visible = self.preview_map.as_ref().map(|c| c.visible).unwrap_or(600.0);
+                self.preview_map = Some(preview_sync::MapCache {
+                    hash,
+                    width: width_q,
+                    fonts,
+                    map,
+                    extra,
+                    visible,
+                });
+            }
+            if let Some(c) = self.preview_map.as_ref() {
+                let body_offset = buf.text.len().saturating_sub(body.len());
+                let anchor_body = self.sync_anchor.saturating_sub(body_offset);
+                let target = (c.extra + preview_sync::y_for_byte(&c.map, anchor_body))
+                    .clamp(0.0, (c.extra + c.map.total - c.visible).max(0.0));
+                preview_builder = preview_builder.vertical_scroll_offset(target);
+            }
         }
         let scroll_out = preview_builder
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                if let Some(raw) = fm_raw {
-                    let fm = markdown::parse_front_matter(raw);
+                if let Some(fm) = fm.as_ref() {
                     ui.horizontal_wrapped(|ui| {
                         ui.weak(txt.front_matter);
-                        if let Some(title) = fm.title {
+                        if let Some(title) = fm.title.as_ref() {
                             ui.label(format!("{} {}", txt.title_label, title));
                         }
                         if !fm.tags.is_empty() {
@@ -1152,18 +1265,18 @@ impl App {
                 }
                 // Wikilinks zu klickbaren Links umschreiben; Ziele als Hooks
                 // registrieren, damit Klicks keine Shell auslösen.
-                let konvertiert = markdown::wikilinks_to_md_links(body);
-                for (target, _) in &ziel_pfade {
+                let converted = markdown::wikilinks_to_md_links(body);
+                for (target, _) in &target_paths {
                     self.cache.add_link_hook(format!("rusty-note:{}", target));
                 }
-                egui_commonmark::CommonMarkViewer::new().show(ui, &mut self.cache, &konvertiert);
+                egui_commonmark::CommonMarkViewer::new().show(ui, &mut self.cache, &converted);
 
                 // Geklickte Hooks abfragen:
-                for (target, pfad) in &ziel_pfade {
+                for (target, path) in &target_paths {
                     let schema = format!("rusty-note:{}", target);
                     if self.cache.get_link_hook(&schema) == Some(true) {
                         self.cache.remove_link_hook(&schema);
-                        self.pending_link = Some(pfad.clone());
+                        self.pending_link = Some(path.clone());
                     }
                 }
 
@@ -1204,11 +1317,12 @@ impl App {
                 }
             });
 
-        // Maße für den nächsten Sync-Merker:
-        self.preview_measure.last = Some((
-            scroll_out.content_size.y,
-            scroll_out.inner_rect.height(),
-        ));
+        // Viewport geometry for next frame (width stays pre-show stable).
+        if let Some(c) = self.preview_map.as_mut() {
+            c.visible = scroll_out.inner_rect.height();
+        }
+        self.preview_inner_w = scroll_out.inner_rect.width();
+        self.sync_drive = false;
     }
 }
 
