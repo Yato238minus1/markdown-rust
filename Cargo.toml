@@ -6,24 +6,19 @@ description = "A fast, keyboard-driven Markdown note editor with live preview an
 license = "MIT"
 
 [dependencies]
-eframe = { version = "0.33", default-features = false, features = ["wgpu", "wayland", "x11", "default_fonts", "accesskit", "persistence"] }
-egui = "0.33"
+eframe = { version = "0.34", default-features = false, features = ["wgpu", "wayland", "x11", "default_fonts", "accesskit", "persistence"] }
+egui = "0.34"
 egui_commonmark = { version = "0.23", features = ["svg"] }
 
-# Parsing / text processing
-pulldown-cmark = { version = "0.13", default-features = false, features = ["html", "simd"] }
-syntect = { version = "5.3", default-features = false, features = ["default-fancy"] } # pure-Rust regex engine, no C++ toolchain needed
 walkdir = "2"
-ignore = "0.4"
 regex = "1"
 
-# Persistence
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "6"
 
 [profile.release]
 opt-level = 3
-lto = true
+lto = "thin"
 codegen-units = 1
 strip = true
