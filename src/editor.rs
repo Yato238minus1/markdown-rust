@@ -117,11 +117,11 @@ impl<'a> SpanBuilder<'a> {
                     let search_from = i + needle.len();
                     // Öffnung muss an einer Wortgrenze stehen (nicht mitten
                     // im Wort wie bei snake_case_oeder_ahnlich).
-                    if ist_wortgrenze(bytes, i, true) {
+                    if is_word_boundary(bytes, i, true) {
                         if let Some(rel) = find_sub(bytes, needle, search_from, end) {
                             let stop = rel + needle.len();
                             // Schlussmarker ebenfalls an Wortgrenze; leerer Inhalt ignorieren.
-                            if stop > i + needle.len() && ist_wortgrenze(bytes, stop, false) {
+                            if stop > i + needle.len() && is_word_boundary(bytes, stop, false) {
                                 self.push(i, stop, Tok::BoldItalic);
                                 i = stop;
                                 matched = true;
@@ -188,15 +188,15 @@ fn is_atx_heading(line: &str) -> bool {
     hashes >= 1 && hashes <= 6 && line[hashes..].starts_with([' ', '\t'])
 }
 
-fn ist_wortzeichen(b: u8) -> bool {
+fn is_word_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b >= 0x80
 }
 
-fn ist_wortgrenze(bytes: &[u8], index: usize, von_links: bool) -> bool {
-    if von_links {
-        index == 0 || !ist_wortzeichen(bytes[index - 1])
+fn is_word_boundary(bytes: &[u8], index: usize, from_left: bool) -> bool {
+    if from_left {
+        index == 0 || !is_word_char(bytes[index - 1])
     } else {
-        index >= bytes.len() || !ist_wortzeichen(bytes[index])
+        index >= bytes.len() || !is_word_char(bytes[index])
     }
 }
 

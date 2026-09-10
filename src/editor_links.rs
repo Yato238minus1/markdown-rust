@@ -3,15 +3,15 @@
 
 /// Ein Wikilink im Text: Ziel und Byte-Range.
 #[derive(Debug, Clone, PartialEq)]
-pub struct WikiLinkBereich {
-    pub ziel: String,
+pub struct WikiLinkRange {
+    pub target: String,
     pub start: usize,
     pub end: usize,
 }
 
 /// Findet den `[[Link]]`, der `byte_pos` enthält (oder None).
 /// `[[Ziel|Alias]]`: die Range umfasst alles, das Ziel ist der Teil vor `|`.
-pub fn wikilink_an(text: &str, byte_pos: usize) -> Option<WikiLinkBereich> {
+pub fn wikilink_at(text: &str, byte_pos: usize) -> Option<WikiLinkRange> {
     if text.is_empty() || byte_pos > text.len() {
         return None;
     }
@@ -20,21 +20,21 @@ pub fn wikilink_an(text: &str, byte_pos: usize) -> Option<WikiLinkBereich> {
     let bytes = text.as_bytes();
 
     // 1) Wikilink: das letzte "[[", dessen "]]" hinter byte_pos liegt.
-    let mut such_ab = 0usize;
-    while let Some(rel) = text[such_ab..].find("[[") {
-        let open = such_ab + rel;
+    let mut search_from = 0usize;
+    while let Some(rel) = text[search_from..].find("[[") {
+        let open = search_from + rel;
         match text[open + 2..].find("]]") {
             Some(close_rel) => {
                 let close = open + 2 + close_rel + 2;
                 if byte_pos >= open && byte_pos < close {
-                    let innen = &text[open + 2..close - 2];
-                    let ziel = innen.split('|').next().unwrap_or(innen).trim().to_string();
-                    return Some(WikiLinkBereich { ziel, start: open, end: close });
+                    let inner = &text[open + 2..close - 2];
+                    let target = inner.split('|').next().unwrap_or(inner).trim().to_string();
+                    return Some(WikiLinkRange { target, start: open, end: close });
                 }
                 if open + 2 > byte_pos && open > byte_pos {
                     break; // weiter hinten liegende Links können nicht mehr treffen
                 }
-                such_ab = open + 2;
+                search_from = open + 2;
             }
             None => break,
         }
@@ -67,12 +67,12 @@ pub fn wikilink_an(text: &str, byte_pos: usize) -> Option<WikiLinkBereich> {
                     if let Some(close_paren_rel) = text[paren + 1..].find(')') {
                         let close_paren = paren + 1 + close_paren_rel + 1;
                         if byte_pos >= bracket && byte_pos < close_paren {
-                            let ziel = text[paren + 1..close_paren - 1]
+                            let target = text[paren + 1..close_paren - 1]
                                 .trim()
                                 .trim_start_matches("rusty-note:")
                                 .to_string();
-                            return Some(WikiLinkBereich {
-                                ziel,
+                            return Some(WikiLinkRange {
+                                target,
                                 start: bracket,
                                 end: close_paren,
                             });
@@ -90,44 +90,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn findet_link_unter_position() {
+    fn finds_link_at_position() {
         let text = "Siehe [[Rust GUI Notes]] heute.";
         // Position auf "GUI" (byte 12)
         let pos = text.find("GUI").unwrap();
-        let b = wikilink_an(text, pos).unwrap();
-        assert_eq!(b.ziel, "Rust GUI Notes");
+        let b = wikilink_at(text, pos).unwrap();
+        assert_eq!(b.target, "Rust GUI Notes");
         assert_eq!(&text[b.start..b.end], "[[Rust GUI Notes]]");
     }
 
     #[test]
-    fn alias_link_liefert_ziel() {
+    fn alias_link_returns_target() {
         let text = "[[Ziel|Alias]]";
-        let b = wikilink_an(text, 3).unwrap();
-        assert_eq!(b.ziel, "Ziel");
+        let b = wikilink_at(text, 3).unwrap();
+        assert_eq!(b.target, "Ziel");
         assert_eq!(&text[b.start..b.end], "[[Ziel|Alias]]");
     }
 
     #[test]
-    fn ausserhalb_von_links_ist_none() {
-        assert!(wikilink_an("kein link hier", 4).is_none());
-        assert!(wikilink_an("[[offen", 3).is_none());
-        assert!(wikilink_an("", 0).is_none());
+    fn outside_links_is_none() {
+        assert!(wikilink_at("kein link hier", 4).is_none());
+        assert!(wikilink_at("[[offen", 3).is_none());
+        assert!(wikilink_at("", 0).is_none());
     }
 
     #[test]
-    fn position_am_rand_zaehlt() {
+    fn edge_position_counts() {
         let text = "[[A]]";
-        assert!(wikilink_an(text, 0).is_some(), "auf '['");
-        assert!(wikilink_an(text, 4).is_some(), "auf ']'");
-        assert!(wikilink_an(text, 5).is_none(), "direkt danach");
+        assert!(wikilink_at(text, 0).is_some(), "auf '['");
+        assert!(wikilink_at(text, 4).is_some(), "auf ']'");
+        assert!(wikilink_at(text, 5).is_none(), "direkt danach");
     }
 
     #[test]
-    fn markdown_link_wird_auch_erkannt() {
+    fn markdown_link_is_detected_too() {
         let text = "klick [Text](Andere.md) bitte";
         let pos = text.find("Text").unwrap();
-        let b = wikilink_an(text, pos).unwrap();
+        let b = wikilink_at(text, pos).unwrap();
         assert_eq!(b.start, text.find("[Text]").unwrap());
-        assert!(b.ziel == "Andere.md");
+        assert!(b.target == "Andere.md");
     }
 }

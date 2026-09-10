@@ -30,7 +30,7 @@ pub struct Vault {
     notes: Vec<NoteEntry>,
     pub buffers: BTreeMap<PathBuf, Buffer>,
     /// Inhalts-Cache für Suche/Glossar: Pfad -> (mtime, Inhalt).
-    inhalt_cache: BTreeMap<PathBuf, (std::time::SystemTime, String)>,
+    content_cache: BTreeMap<PathBuf, (std::time::SystemTime, String)>,
 }
 
 /// Canonicalize, falling back to the input path when it does not exist yet.
@@ -70,7 +70,7 @@ impl Vault {
             root,
             notes: Vec::new(),
             buffers: BTreeMap::new(),
-            inhalt_cache: BTreeMap::new(),
+            content_cache: BTreeMap::new(),
         })
     }
 
@@ -84,14 +84,14 @@ impl Vault {
 
     /// Notizen, die in einem der angegebenen Ordner liegen (relativer Pfad,
     /// '/'-getrennt; "Glossar" matcht auch "Glossar/Sub"). Leere Liste = alle.
-    pub fn notizen_aus(&self, ordner: &[String]) -> Vec<PathBuf> {
-        if ordner.is_empty() {
+    pub fn notes_in(&self, folders: &[String]) -> Vec<PathBuf> {
+        if folders.is_empty() {
             return self.notes.iter().map(|n| n.abs.clone()).collect();
         }
         self.notes
             .iter()
             .filter(|n| {
-                ordner.iter().any(|o| {
+                folders.iter().any(|o| {
                     let o = o.trim_matches('/');
                     !o.is_empty() && (n.rel == o || n.rel.starts_with(&format!("{}/", o)))
                 })
@@ -123,16 +123,16 @@ impl Vault {
         self.notes = notes;
 
         // Inhalts-Cache entwerten, wenn Dateien verschwunden oder neuer sind.
-        let mut aktuell: BTreeMap<PathBuf, std::time::SystemTime> = BTreeMap::new();
+        let mut current: BTreeMap<PathBuf, std::time::SystemTime> = BTreeMap::new();
         for n in &self.notes {
             if let Ok(md) = fs::metadata(&n.abs) {
                 if let Ok(m) = md.modified() {
-                    aktuell.insert(n.abs.clone(), m);
+                    current.insert(n.abs.clone(), m);
                 }
             }
         }
-        self.inhalt_cache.retain(|p, (mtime, _)| {
-            aktuell.get(p).map(|m| *m <= *mtime).unwrap_or(false)
+        self.content_cache.retain(|p, (mtime, _)| {
+            current.get(p).map(|m| *m <= *mtime).unwrap_or(false)
         });
         Ok(())
     }
@@ -165,13 +165,13 @@ impl Vault {
             return Ok(buf.text.clone());
         }
         let mtime = fs::metadata(&key)?.modified()?;
-        if let Some((cached_mtime, text)) = self.inhalt_cache.get(&key) {
+        if let Some((cached_mtime, text)) = self.content_cache.get(&key) {
             if *cached_mtime >= mtime {
                 return Ok(text.clone());
             }
         }
         let text = fs::read_to_string(&key)?;
-        self.inhalt_cache.insert(key, (mtime, text.clone()));
+        self.content_cache.insert(key, (mtime, text.clone()));
         Ok(text)
     }
 
@@ -185,7 +185,7 @@ impl Vault {
         buf.dirty = true;
         // Cache sofort auf den neuen Stand bringen (die Datei ist noch nicht
         // gespeichert, daher UNIX_EPOCH als mtime, bis save() sie setzt).
-        self.inhalt_cache
+        self.content_cache
             .insert(key, (std::time::SystemTime::UNIX_EPOCH, buf.text.clone()));
         Ok(())
     }
@@ -201,7 +201,7 @@ impl Vault {
         fs::rename(&tmp, &buf.path)?;
         buf.dirty = false;
         if let Ok(m) = fs::metadata(&buf.path).and_then(|md| md.modified()) {
-            self.inhalt_cache
+            self.content_cache
                 .insert(buf.path.clone(), (m, buf.text.clone()));
         }
         Ok(())
@@ -250,8 +250,8 @@ impl Vault {
             buf.path = new_abs.clone();
             self.buffers.insert(new_abs.clone(), buf);
         }
-        if let Some((m, text)) = self.inhalt_cache.remove(&old) {
-            self.inhalt_cache.insert(new_abs.clone(), (m, text));
+        if let Some((m, text)) = self.content_cache.remove(&old) {
+            self.content_cache.insert(new_abs.clone(), (m, text));
         }
         self.scan()?;
         Ok(canon(&new_abs))
@@ -261,7 +261,7 @@ impl Vault {
     pub fn delete_note(&mut self, abs: &Path) -> io::Result<()> {
         let key = canon(abs);
         self.buffers.remove(&key);
-        self.inhalt_cache.remove(&key);
+        self.content_cache.remove(&key);
         fs::remove_file(&key)?;
         self.scan()?;
         Ok(())

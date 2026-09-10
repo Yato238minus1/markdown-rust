@@ -129,7 +129,7 @@ pub fn extract_wikilinks(body: &str) -> Vec<String> {
 /// Schema `rusty-note:` um (klickbar in egui_commonmark). Code-Spans und
 /// Code-Blöcke bleiben unverändert; bereits existierende `[..](..)`-Links
 /// werden nicht angetastet, da `[[` in ihnen nicht als Wikilink zählt.
-pub fn wikilinks_zu_md_links(text: &str) -> String {
+pub fn wikilinks_to_md_links(text: &str) -> String {
     if !text.contains("[[") {
         return text.to_string();
     }
@@ -162,15 +162,15 @@ pub fn wikilinks_zu_md_links(text: &str) -> String {
             b'[' if i + 1 < len && bytes[i + 1] == b'[' => {
                 let start = i;
                 i += 2;
-                let mut ziel = None;
+                let mut target = None;
                 while i + 1 < len && &bytes[i..i + 2] != b"]]" {
                     i += 1;
                 }
                 if i + 1 < len {
-                    ziel = Some(&text[start + 2..i]);
+                    target = Some(&text[start + 2..i]);
                     i += 2;
                 }
-                match ziel {
+                match target {
                     Some(z) => {
                         let z = z.trim();
                         let (target, label) = match z.split_once('|') {
@@ -317,7 +317,7 @@ mod alias_und_wikilink_tests {
     #[test]
     fn wikilinks_werden_zu_klickbaren_md_links() {
         let text = "Siehe [[Rust GUI Notes]] und [[Rust|die Sprache]].";
-        let out = wikilinks_zu_md_links(text);
+        let out = wikilinks_to_md_links(text);
         assert!(out.contains("[Rust GUI Notes](<rusty-note:Rust GUI Notes>)"), "{}", out);
         assert!(out.contains("[die Sprache](<rusty-note:Rust>)"), "{}", out);
         assert!(!out.contains("[["));
@@ -326,7 +326,7 @@ mod alias_und_wikilink_tests {
     #[test]
     fn wikilink_konvertierung_touchiert_code_nicht() {
         let text = "`[[KeinLink]]` und ```\n[[AuchNicht]]\n```\naber [[Doch]].";
-        let out = wikilinks_zu_md_links(text);
+        let out = wikilinks_to_md_links(text);
         assert!(out.contains("`[[KeinLink]]`"));
         assert!(out.contains("[[AuchNicht]]"));
         assert!(out.contains("[Doch](<rusty-note:Doch>)"));

@@ -311,7 +311,7 @@ mod tests {
     }
 
     #[test]
-    fn leerer_text_liefert_start_und_ende() {
+    fn empty_text_gives_start_and_end() {
         let ctx = test_ctx();
         let map = build_source_y_map(&ctx, "", 400.0);
         assert_eq!(map.len(), 2);
@@ -320,7 +320,7 @@ mod tests {
     }
 
     #[test]
-    fn y_karte_ist_monoton_steigend() {
+    fn y_map_is_monotonically_increasing() {
         let ctx = test_ctx();
         let md = "# Titel\n\nEin Absatz mit Text der umgebrochen werden sollte weil er sehr lang ist und ueber die breite hinausgeht.\n- Punkt 1\n- Punkt 2\n```\ncode zeile\n```\n";
         let map = build_source_y_map(&ctx, md, 200.0);
@@ -331,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn y_for_byte_anfang_ist_0() {
+    fn y_for_byte_start_is_0() {
         let ctx = test_ctx();
         let md = "a\nbb\nccc\n";
         let map = build_source_y_map(&ctx, md, 400.0);
@@ -339,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn y_for_byte_letzter_byte_ist_gesamthoehe() {
+    fn y_for_byte_last_byte_is_total_height() {
         let ctx = test_ctx();
         let md = "a\nbb\nccc\n";
         let map = build_source_y_map(&ctx, md, 400.0);
@@ -351,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn heading_ist_hoeher_als_fliesstext() {
+    fn heading_is_higher_than_body() {
         let ctx = test_ctx();
         let h = build_source_y_map(&ctx, "# Grosse Ueberschrift\n", 400.0);
         let p = build_source_y_map(&ctx, "Kleiner Fliesstext\n", 400.0);
@@ -359,7 +359,7 @@ mod tests {
     }
 
     #[test]
-    fn absatz_wird_als_ein_block_gemessen() {
+    fn paragraph_measured_as_single_block() {
         // Ein Absatz aus 5 kurzen Quellzeilen muss als EIN Block (2 map-Eintraege
         // vor dem End-Eintrag) gezaehlt werden, nicht 5.
         let ctx = test_ctx();
@@ -371,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn echte_notiz_ist_monoton_und_blockweise() {
+    fn real_note_is_monotonic_and_blockwise() {
         // Laedt die echte Testnotiz und prueft die Kern-Eigenschaften der
         // Sync-Schaetzung deterministisch (ohne Live-UI).
         let pfad = std::env::var("CARGO_MANIFEST_DIR").unwrap() + "/../rusty-vault/Lange Notiz.md";

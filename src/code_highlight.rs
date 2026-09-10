@@ -29,7 +29,7 @@ impl Default for CodeHighlighter {
 
 /// Eine gefärbte Spanne innerhalb des Codes (Byte-Offsets relativ zum Code).
 #[derive(Debug, Clone, PartialEq)]
-pub struct FarbSpanne {
+pub struct ColorSpan {
     pub start: usize,
     pub end: usize,
     pub farbe: [u8; 4],
@@ -37,7 +37,7 @@ pub struct FarbSpanne {
 
 impl CodeHighlighter {
     /// Erkennt die Sprache am Infostring ("rust", "js", …), None = Plain.
-    fn syntax_fuer(&self, info: &str) -> Option<&SyntaxReference> {
+    fn syntax_for(&self, info: &str) -> Option<&SyntaxReference> {
         let token = info.trim().split(&[',', ' '][..]).next()?.trim();
         if token.is_empty() {
             return None;
@@ -48,21 +48,21 @@ impl CodeHighlighter {
     }
 
     /// Färbt `code` (Sprache via Infostring). Ohne erkannte Sprache: Plain-Farbe.
-    pub fn highlight(&self, code: &str, info: &str) -> Vec<FarbSpanne> {
-        let syntax = match self.syntax_fuer(info) {
+    pub fn highlight(&self, code: &str, info: &str) -> Vec<ColorSpan> {
+        let syntax = match self.syntax_for(info) {
             Some(s) => s,
             None => {
                 // Kein Syntax-Highlighting: alles als eine Spanne zurückgeben.
                 return if code.is_empty() {
                     Vec::new()
                 } else {
-                    vec![FarbSpanne { start: 0, end: code.len(), farbe: [152, 206, 206, 255] }]
+                    vec![ColorSpan { start: 0, end: code.len(), farbe: [152, 206, 206, 255] }]
                 };
             }
         };
 
         let mut hl = HighlightLines::new(syntax, &self.theme);
-        let mut out: Vec<FarbSpanne> = Vec::new();
+        let mut out: Vec<ColorSpan> = Vec::new();
         let mut cursor = 0usize;
 
         for zeile in LinesWithEndings::from(code) {
@@ -81,12 +81,12 @@ impl CodeHighlighter {
                                 continue;
                             }
                         }
-                        out.push(FarbSpanne { start, end, farbe });
+                        out.push(ColorSpan { start, end, farbe });
                     }
                 }
             } else {
                 // Parse-Fehler: Rest einfarbig.
-                out.push(FarbSpanne {
+                out.push(ColorSpan {
                     start: cursor,
                     end: code.len(),
                     farbe: [152, 206, 206, 255],
@@ -103,7 +103,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rust_code_wird_mehrfarbig() {
+    fn rust_code_is_multicolored() {
         let h = CodeHighlighter::default();
         let spans = h.highlight("let x = 1;\nfn main() {}\n", "rust");
         // Mindestens 2 verschiedene Farben + mehrere Spans:
@@ -113,7 +113,7 @@ mod tests {
     }
 
     #[test]
-    fn offsets_sind_kontiguiert_und_vollstaendig() {
+    fn offsets_are_contiguous_and_complete() {
         let h = CodeHighlighter::default();
         let code = "let x = 1;\n";
         let spans = h.highlight(code, "rust");
@@ -127,14 +127,14 @@ mod tests {
     }
 
     #[test]
-    fn unbekannte_sprache_einfarbig_oder_leer_ohne_crash() {
+    fn unknown_language_single_color_or_empty_without_crash() {
         let h = CodeHighlighter::default();
         let spans = h.highlight("irgendwas", "keinestruktur");
         assert!(!spans.is_empty() || true); // kein Crash ist das Kriterium
     }
 
     #[test]
-    fn js_wird_erkannt() {
+    fn js_is_detected() {
         let h = CodeHighlighter::default();
         let spans = h.highlight("var x = 1;\n", "js");
         assert!(spans.len() >= 2);
