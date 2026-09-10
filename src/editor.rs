@@ -115,13 +115,17 @@ impl<'a> SpanBuilder<'a> {
                     let doubled = i + 1 < end && bytes[i + 1] == b;
                     let needle: &[u8] = if doubled { &[b, b] } else { &[b] };
                     let search_from = i + needle.len();
-                    if let Some(rel) = find_sub(bytes, needle, search_from, end) {
-                        let stop = rel + needle.len();
-                        // skip empty emphasis
-                        if stop > i + needle.len() {
-                            self.push(i, stop, Tok::BoldItalic);
-                            i = stop;
-                            matched = true;
+                    // Öffnung muss an einer Wortgrenze stehen (nicht mitten
+                    // im Wort wie bei snake_case_oeder_ahnlich).
+                    if ist_wortgrenze(bytes, i, true) {
+                        if let Some(rel) = find_sub(bytes, needle, search_from, end) {
+                            let stop = rel + needle.len();
+                            // Schlussmarker ebenfalls an Wortgrenze; leerer Inhalt ignorieren.
+                            if stop > i + needle.len() && ist_wortgrenze(bytes, stop, false) {
+                                self.push(i, stop, Tok::BoldItalic);
+                                i = stop;
+                                matched = true;
+                            }
                         }
                     }
                 }
@@ -177,6 +181,24 @@ fn find_sub(haystack: &[u8], needle: &[u8], from: usize, to: usize) -> Option<us
     None
 }
 
+/// ATX-Überschrift: 1-6 '#' gefolgt von Leerzeichen/Tab.
+fn is_atx_heading(line: &str) -> bool {
+    let hashes = line.bytes().take_while(|&b| b == b'#').count();
+    hashes >= 1 && hashes <= 6 && line[hashes..].starts_with([' ', '\t'])
+}
+
+fn ist_wortzeichen(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b >= 0x80
+}
+
+fn ist_wortgrenze(bytes: &[u8], index: usize, von_links: bool) -> bool {
+    if von_links {
+        index == 0 || !ist_wortzeichen(bytes[index - 1])
+    } else {
+        index >= bytes.len() || !ist_wortzeichen(bytes[index])
+    }
+}
+
 fn is_fence(line: &str) -> bool {
     let t = line.trim_start();
     t.starts_with("```") || t.starts_with("~~~")
@@ -217,7 +239,7 @@ pub fn highlight(text: &str) -> Vec<Span> {
             };
         } else if in_fence {
             sb.push(pos, line_end, Tok::CodeBlock);
-        } else if line.starts_with('#') && line['#'.len_utf8()..].starts_with([' ', '\t']) {
+        } else if is_atx_heading(line) {
             sb.push(pos, line_end, Tok::Heading);
         } else if line.starts_with('>') {
             sb.push(pos, line_end, Tok::Quote);

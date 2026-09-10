@@ -1,9 +1,6 @@
 //! rusty-notes: a fast, keyboard-driven Markdown note editor.
 
-pub mod editor;
-pub mod markdown;
-pub mod search;
-pub mod vault;
+use rusty_notes::{editor, glossary, markdown, search, vault};
 
 use std::path::PathBuf;
 

@@ -29,6 +29,8 @@ pub struct Vault {
     /// Sorted by relative path.
     notes: Vec<NoteEntry>,
     pub buffers: BTreeMap<PathBuf, Buffer>,
+    /// Inhalts-Cache für Suche/Glossar: Pfad -> (mtime, Inhalt).
+    inhalt_cache: BTreeMap<PathBuf, (std::time::SystemTime, String)>,
 }
 
 /// Canonicalize, falling back to the input path when it does not exist yet.
@@ -64,7 +66,12 @@ impl Vault {
                 format!("not a directory: {}", root.display()),
             ));
         }
-        Ok(Vault { root, notes: Vec::new(), buffers: BTreeMap::new() })
+        Ok(Vault {
+            root,
+            notes: Vec::new(),
+            buffers: BTreeMap::new(),
+            inhalt_cache: BTreeMap::new(),
+        })
     }
 
     pub fn root(&self) -> &Path {
@@ -96,6 +103,19 @@ impl Vault {
         }
         notes.sort_by(|a, b| a.rel.cmp(&b.rel));
         self.notes = notes;
+
+        // Inhalts-Cache entwerten, wenn Dateien verschwunden oder neuer sind.
+        let mut aktuell: BTreeMap<PathBuf, std::time::SystemTime> = BTreeMap::new();
+        for n in &self.notes {
+            if let Ok(md) = fs::metadata(&n.abs) {
+                if let Ok(m) = md.modified() {
+                    aktuell.insert(n.abs.clone(), m);
+                }
+            }
+        }
+        self.inhalt_cache.retain(|p, (mtime, _)| {
+            aktuell.get(p).map(|m| *m <= *mtime).unwrap_or(false)
+        });
         Ok(())
     }
 
@@ -119,6 +139,24 @@ impl Vault {
         self.buffers.get_mut(&key)
     }
 
+    /// Inhalt einer Notiz für Suche/Glossar: offener (evtl. geänderter)
+    /// Puffer gewinnt; sonst Cache mit mtime-Prüfung; sonst Platte.
+    pub fn content_for(&mut self, abs: &Path) -> io::Result<String> {
+        let key = canon(abs);
+        if let Some(buf) = self.buffers.get(&key) {
+            return Ok(buf.text.clone());
+        }
+        let mtime = fs::metadata(&key)?.modified()?;
+        if let Some((cached_mtime, text)) = self.inhalt_cache.get(&key) {
+            if *cached_mtime >= mtime {
+                return Ok(text.clone());
+            }
+        }
+        let text = fs::read_to_string(&key)?;
+        self.inhalt_cache.insert(key, (mtime, text.clone()));
+        Ok(text)
+    }
+
     /// Canonical edit path: replaces buffer text and marks it dirty.
     pub fn set_text(&mut self, abs: &Path, text: impl Into<String>) -> io::Result<()> {
         let key = canon(abs);
@@ -127,6 +165,10 @@ impl Vault {
         })?;
         buf.text = text.into();
         buf.dirty = true;
+        // Cache sofort auf den neuen Stand bringen (die Datei ist noch nicht
+        // gespeichert, daher UNIX_EPOCH als mtime, bis save() sie setzt).
+        self.inhalt_cache
+            .insert(key, (std::time::SystemTime::UNIX_EPOCH, buf.text.clone()));
         Ok(())
     }
 
@@ -138,6 +180,10 @@ impl Vault {
         })?;
         fs::write(&buf.path, &buf.text)?;
         buf.dirty = false;
+        if let Ok(m) = fs::metadata(&buf.path).and_then(|md| md.modified()) {
+            self.inhalt_cache
+                .insert(buf.path.clone(), (m, buf.text.clone()));
+        }
         Ok(())
     }
 
@@ -170,12 +216,24 @@ impl Vault {
         if let Some(parent) = new_abs.parent() {
             fs::create_dir_all(parent)?;
         }
+        // Kein stilles Überschreiben: Ziel darf nicht existieren — außer es
+        // ist (kanonisch) die Quelldatei selbst (Groß-/Kleinschreibungs-Fall
+        // auf case-insensitiven Dateisystemen).
+        if new_abs.exists() && canon(&new_abs) != canon(&old) {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("Ziel existiert bereits: {}", new_rel),
+            ));
+        }
         // Preserve unsaved edits across the move.
         let mut moved = self.buffers.remove(&old);
         fs::rename(&old, &new_abs)?;
         if let Some(mut buf) = moved.take() {
             buf.path = new_abs.clone();
             self.buffers.insert(new_abs.clone(), buf);
+        }
+        if let Some((m, text)) = self.inhalt_cache.remove(&old) {
+            self.inhalt_cache.insert(new_abs.clone(), (m, text));
         }
         self.scan()?;
         Ok(canon(&new_abs))
@@ -185,6 +243,7 @@ impl Vault {
     pub fn delete_note(&mut self, abs: &Path) -> io::Result<()> {
         let key = canon(abs);
         self.buffers.remove(&key);
+        self.inhalt_cache.remove(&key);
         fs::remove_file(&key)?;
         self.scan()?;
         Ok(())
