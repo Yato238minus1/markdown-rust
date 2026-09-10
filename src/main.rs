@@ -821,6 +821,17 @@ impl App {
 
         let (fm_raw, body) = markdown::split_front_matter(&buf.text);
 
+        // Wikilink-Ziele einmalig auflösen (vor dem UI-Block, kein Borrow-Konflikt).
+        let ziele: Vec<String> = markdown::extract_wikilinks(body);
+        let ziel_pfade: Vec<(String, PathBuf)> = ziele
+            .iter()
+            .filter_map(|z| {
+                let (ziel, _) = z.split_once('|').unwrap_or((z.as_str(), ""));
+                let ziel = ziel.trim().to_string();
+                self.notiz_fuer_wikilink(&ziel).map(|p| (ziel, p))
+            })
+            .collect();
+
         egui::ScrollArea::vertical()
             .id_salt("preview_scroll")
             .show(ui, |ui| {
@@ -837,9 +848,22 @@ impl App {
                     });
                     ui.separator();
                 }
-                // Wikilinks zu klickbaren Links umschreiben.
+                // Wikilinks zu klickbaren Links umschreiben; Ziele als Hooks
+                // registrieren, damit Klicks keine Shell auslösen.
                 let konvertiert = markdown::wikilinks_zu_md_links(body);
+                for (ziel, _) in &ziel_pfade {
+                    self.cache.add_link_hook(format!("rusty-note:{}", ziel));
+                }
                 egui_commonmark::CommonMarkViewer::new().show(ui, &mut self.cache, &konvertiert);
+
+                // Geklickte Hooks abfragen:
+                for (ziel, pfad) in &ziel_pfade {
+                    let schema = format!("rusty-note:{}", ziel);
+                    if self.cache.get_link_hook(&schema) == Some(true) {
+                        self.cache.remove_link_hook(&schema);
+                        self.pending_link = Some(pfad.clone());
+                    }
+                }
 
                 // Klickbare Glossar-Verweise (virtuelle Links dieser Notiz):
                 if let Some(g) = &self.glossar {

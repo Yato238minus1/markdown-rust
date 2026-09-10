@@ -183,3 +183,25 @@ mod tests {
         assert_eq!(ranked.len(), 2);
     }
 }
+
+#[cfg(test)]
+mod switcher_pfad_tests {
+    use super::*;
+
+    #[test]
+    fn switcher_matcht_dateinamen_nicht_nur_pfad() {
+        // "welcome" soll "Glossar/egui" NICHT treffen, aber "Welcome" schon.
+        let ranked = quick_switcher(["Glossar/egui", "Welcome"].into_iter(), "welcome");
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].rel, "Welcome");
+
+        // Aber "egui" trifft den Pfad-Namen am Ende:
+        let ranked2 = quick_switcher(["Glossar/egui", "Welcome"].into_iter(), "egui");
+        assert_eq!(ranked2[0].rel, "Glossar/egui");
+
+        // Auch der Ordnername selbst ist suchbar:
+        let ranked3 = quick_switcher(["Glossar/egui", "Welcome"].into_iter(), "glossar");
+        assert_eq!(ranked3.len(), 1);
+        assert_eq!(ranked3[0].rel, "Glossar/egui");
+    }
+}

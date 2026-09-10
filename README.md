@@ -4,15 +4,36 @@ Ein schneller, tastaturgetriebener Markdown-Notiz-Editor in Rust.
 Inspiriert von Obsidian (Vault + Wikilinks), Zen Notes (minimale Oberfläche)
 und Zettlr (Schreibfokus).
 
+## Wikilinks & Glossar
+
+`[[Ziel]]` und `[[Ziel|Alias]]` werden in der Vorschau als **klickbare
+Links** gerendert (über Link-Hooks von egui_commonmark — keine Shell-Aufrufe).
+Unbekannte Ziele werden per exakter Stamm-Match, dann Groß-/Klein-insensitivem
+Teilstring aufgelöst.
+
 ## Glossar (virtuelle Verlinkung)
 
 Angelehnt an das Obsidian-Plugin *Virtual Linker / Glossary*, aber neu
 gedacht: Ein **Aho-Corasick-Automat** findet alle Glossar-Begriffe in einem
 einzigen Durchlauf (O(Textlänge)), statt jeden Begriff einzeln zu suchen.
-Begriffe (die Notiz-Namen des Vaults) werden im Editor **grün** markiert und
-unter der Vorschau als klickbare Verweise aufgelistet — ohne den Text zu
-verändern. Code-Blöcke, Inline-Code und bestehende Links werden nie verlinkt;
-Groß-/Kleinschreibung ist optional (Einstellung).
+
+Glossar-Quelle ist ein **Unterordner** (Standard `Glossar`, in den
+Einstellungen konfigurierbar, mehrere Ordner möglich). Begriffe sind die
+Notiz-Namen, zusätzliche Schreibweisen kommen aus dem Front-Matter
+(`aliases: [a, b]`). Begriffe werden im Editor **grün** markiert und optional
+unter der Vorschau als klickbare Verweise aufgelistet — der Text selbst bleibt
+nicht verändert. Code-Blöcke, Inline-Code und bestehende Links werden nie
+verlinkt.
+
+### Einstellungen (Auszug)
+
+- Allgemein: Autospeichern-Verzögerung, Vorschau-Standard
+- Editor: Schriftgröße
+- Glossar: aktiv, Groß-/Kleinschreibung, Vorschau-Liste, max. Treffer,
+  Mindestbegriffslänge, Glossar-Unterordner (Zeilenliste)
+- Tastenkürzel: alle 12 Aktionen frei belegbar (Aufzeichnung per Klick auf
+  „Ändern", dann Taste drücken; Escape bricht ab). Fehlende Keybinds in alten
+  Configs werden automatisch mit der Standard-Belegung aufgefüllt.
 
 ![status](https://img.shields.io/badge/tests-27%20passing-brightgreen)
 
@@ -78,7 +99,7 @@ src/
 ├── search.rs         Volltextsuche + Fuzzy-Schnellwechsler
 ├── editor.rs         Byte<->Zeile-Index + inkrementelles Highlighting
 ├── glossary.rs       Aho-Corasick-Glossar + Span-Verschneidung
-├── einstellungen.rs  Persistente Einstellungen (Dirty-Tracking)
+├── einstellungen.rs  Persistente Einstellungen (Dirty-Tracking, Keybinds)
 └── i18n.rs           Deutsche UI-Texte
 tests/bug_tests.rs    Regressionstests für gefundene Bugs
 ```

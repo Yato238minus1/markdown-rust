@@ -271,11 +271,82 @@ impl EinstellungsManager {
     }
 
     /// Laedt aus einem beliebigen Pfad (Tests: Temp-Datei, keine echten Daten!).
+    /// Fehlende Keybinds (z.B. alte Configs) werden mit Standards aufgefüllt.
     pub fn laden_aus(pfad: &std::path::Path) -> EinstellungsManager {
-        let werte = std::fs::read_to_string(pfad)
+        // Fehlende Felder sollen die Standardwerte erhalten (serde::default),
+        // daher: Defaults laden und vorhandene Datei-Werte drüberlegen.
+        let datei: Option<serde_json::Value> = std::fs::read_to_string(pfad)
             .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
+            .and_then(|s| serde_json::from_str(&s).ok());
+        let mut werte = Einstellungen::default();
+        if let Some(serde_json::Value::Object(map)) = datei {
+            // Feldweise überschreiben, keybinds nur wenn nicht-leer:
+            if let Some(v) = map.get("autosave_ms") {
+                if let Some(x) = v.as_u64() {
+                    werte.autosave_ms = x;
+                }
+            }
+            if let Some(v) = map.get("vorschau_sichtbar") {
+                if let Some(x) = v.as_bool() {
+                    werte.vorschau_sichtbar = x;
+                }
+            }
+            if let Some(v) = map.get("glossar_aktiv") {
+                if let Some(x) = v.as_bool() {
+                    werte.glossar_aktiv = x;
+                }
+            }
+            if let Some(v) = map.get("glossar_case_insensitive") {
+                if let Some(x) = v.as_bool() {
+                    werte.glossar_case_insensitive = x;
+                }
+            }
+            if let Some(v) = map.get("glossar_max_treffer") {
+                if let Some(x) = v.as_u64() {
+                    werte.glossar_max_treffer = x as usize;
+                }
+            }
+            if let Some(v) = map.get("glossar_min_laenge") {
+                if let Some(x) = v.as_u64() {
+                    werte.glossar_min_laenge = x as usize;
+                }
+            }
+            if let Some(v) = map.get("glossar_vorschau_liste") {
+                if let Some(x) = v.as_bool() {
+                    werte.glossar_vorschau_liste = x;
+                }
+            }
+            if let Some(v) = map.get("editor_schriftgroesse") {
+                if let Some(x) = v.as_f64() {
+                    werte.editor_schriftgroesse = x as f32;
+                }
+            }
+            if let Some(v) = map.get("glossar_ordner") {
+                if let Some(arr) = v.as_array() {
+                    werte.glossar_ordner = arr
+                        .iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect();
+                }
+            }
+            if let Some(v) = map.get("last_vault") {
+                werte.last_vault = v.as_str().map(String::from);
+            }
+            if let Some(v) = map.get("keybinds") {
+                if let Some(arr) = v.as_array() {
+                    if !arr.is_empty() {
+                        werte.keybinds = arr
+                            .iter()
+                            .filter_map(|x| {
+                                let a = x.get(0)?.as_str()?.to_string();
+                                let b = x.get(1)?.as_str()?.to_string();
+                                Some((a, b))
+                            })
+                            .collect();
+                    }
+                }
+            }
+        }
         EinstellungsManager { werte, dirty: false }
     }
 
@@ -439,5 +510,31 @@ mod tests {
         let _ = m.speichern_wenn_noetig_nach(&pfad);
         m.setze_last_vault(Some("/x".into()));
         assert!(!m.ist_dirty(), "gleicher Wert erneut → kein Dirty");
+    }
+}
+
+#[cfg(test)]
+mod keybind_default_tests {
+    use super::*;
+
+    #[test]
+    fn leere_keybinds_werden_mit_standard_gefuellt() {
+        let pfad = std::env::temp_dir().join(format!(
+            "rusty-kb-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(pfad.parent().unwrap()).unwrap();
+        std::fs::write(&pfad, r#"{"autosave_ms": 500, "keybinds": []}"#).unwrap();
+
+        let m = EinstellungsManager::laden_aus(&pfad);
+        assert_eq!(m.werte.autosave_ms, 500);
+        assert!(
+            m.werte.bind_fuer(Aktion::Schnellwechsler).is_some(),
+            "leere keybinds müssen Standard-Belegung erhalten"
+        );
+        assert!(m.werte.bind_fuer(Aktion::Speichern).is_some());
     }
 }
