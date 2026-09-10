@@ -1,7 +1,7 @@
 //! rusty-notes: a fast, keyboard-driven Markdown note editor.
 
 use rusty_notes::{
-    einstellungen::{EinstellungsManager, Einstellungen},
+    einstellungen::{Aktion, EinstellungsManager, Einstellungen, Keybind},
     glossary::{self, Glossar},
     i18n as t, markdown, search, vault,
 };
@@ -76,6 +76,7 @@ struct App {
     focus_editor_once: bool,
     einst: EinstellungsManager,
     glossar: Option<Glossar>,
+    keybind_aufzeichnen: Option<Aktion>,
 }
 
 impl Default for App {
@@ -100,6 +101,7 @@ impl Default for App {
             focus_editor_once: false,
             einst,
             glossar: None,
+            keybind_aufzeichnen: None,
         }
         .with_last_vault(last_vault)
     }
@@ -128,23 +130,45 @@ impl App {
         self
     }
 
+    /// Löst einen Wikilink-Text ([[Ziel]]) auf einen existierenden Notizpfad auf.
+    fn notiz_fuer_wikilink(&self, ziel: &str) -> Option<PathBuf> {
+        let v = self.vault.as_ref()?;
+        let pfade: Vec<PathBuf> = v.notes().iter().map(|n| n.abs.clone()).collect();
+        markdown::resolve_wikilink(pfade.iter().map(|p| p.as_path()), ziel)
+    }
+
     /// Glossar aus allen Notiz-Stems neu aufbauen (nur bei Vault-Änderung).
     fn glossar_erneuern(&mut self) {
         if !self.einst.werte.glossar_aktiv {
             self.glossar = None;
             return;
         }
-        if let Some(v) = self.vault.as_ref() {
-            let eintraege: Vec<glossary::GlossarEintrag> = v
-                .notes()
+        let ordner = self.einst.werte.glossar_ordner.clone();
+        if let Some(v) = self.vault.as_mut() {
+            let notizen = v.notizen_aus(&ordner);
+            let eintraege: Vec<glossary::GlossarEintrag> = notizen
                 .iter()
-                .map(|n| glossary::GlossarEintrag {
-                    begriff: std::path::Path::new(&n.rel)
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    pfad: n.abs.clone(),
+                .map(|abs| {
+                    // Aliase aus Front-Matter der Notiz lesen (Cache!).
+                    let aliase = v
+                        .content_for(abs)
+                        .ok()
+                        .map(|c| {
+                            markdown::parse_front_matter(
+                                markdown::split_front_matter(&c).0.unwrap_or(""),
+                            )
+                            .aliases
+                        })
+                        .unwrap_or_default();
+                    glossary::GlossarEintrag {
+                        begriff: abs
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        aliase,
+                        pfad: abs.clone(),
+                    }
                 })
                 .collect();
             self.glossar = Some(Glossar::neu(
@@ -406,36 +430,23 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.autosave_tick();
 
-        // Global keyboard shortcuts.
-        if let Some(action) = check_shortcuts(&ctx, &self.overlay) {
-            match action {
-                Shortcut::OpenFolder => self.open_folder_dialog_and_load(),
-                Shortcut::QuickSwitcher => {
-                    self.overlay = Overlay::Switcher;
-                    self.switcher_query.clear();
-                    self.switcher_selected = 0;
-                }
-                Shortcut::CommandPalette => {
-                    self.overlay = Overlay::CommandPalette;
-                    self.switcher_query.clear();
-                    self.switcher_selected = 0;
-                }
-                Shortcut::Save => self.save_active(),
-                Shortcut::NewNote => self.create_note_flow(),
-                Shortcut::TogglePreview => self.preview_visible = !self.preview_visible,
-                Shortcut::FocusSearch => {
-                    self.sidebar_tab = SidebarTab::Search;
-                }
-                Shortcut::Einstellungen => self.einstellungen_oeffnen(),
-            }
+        // Tastatur-Shortcuts aus den Einstellungen.
+        if let Some(aktion) = check_shortcuts(&ctx, &self.einst.werte.clone(), &self.overlay) {
+            self.aktion_ausfuehren(aktion);
         }
 
-        // A wikilink click from the preview pane opens its target.
+        // Klick aus der Vorschau: rusty-note:-Schema auf Notizpfad auflösen.
         if let Some(target) = self.pending_link.take() {
-            if target.exists() {
-                self.open_note(target);
+            let ziel = if let Some(rest) =
+                target.to_str().and_then(|s| s.strip_prefix("rusty-note:"))
+            {
+                self.notiz_fuer_wikilink(rest)
             } else {
-                self.status = "Note not found".into();
+                Some(target)
+            };
+            match ziel {
+                Some(pfad) if pfad.exists() => self.open_note(pfad),
+                _ => self.status = t::status_note_not_found(),
             }
         }
 
@@ -555,43 +566,79 @@ impl eframe::App for App {
     }
 }
 
-enum Shortcut {
-    OpenFolder,
-    QuickSwitcher,
-    CommandPalette,
-    Save,
-    NewNote,
-    TogglePreview,
-    FocusSearch,
-    Einstellungen,
-}
+/// Prüft alle Keybinds aus den Einstellungen gegen den Tastaturzustand.
+/// Aufbau der Lookup-Map: O(Keybinds) pro Frame, Lookup O(1) pro Taste.
+fn check_shortcuts(
+    ctx: &egui::Context,
+    werte: &Einstellungen,
+    overlay: &Overlay,
+) -> Option<Aktion> {
+    if !matches!(overlay, Overlay::None) {
+        return None; // Overlays schlucken Shortcuts
+    }
+    let binds: Vec<(Aktion, Keybind)> = Aktion::ALLE
+        .iter()
+        .filter_map(|(a, _)| werte.bind_fuer(*a).map(|b| (*a, b)))
+        .collect();
 
-fn check_shortcuts(ctx: &egui::Context, overlay: &Overlay) -> Option<Shortcut> {
-    let mut out = None;
     ctx.input(|i| {
         let mods = i.modifiers;
-        if !matches!(overlay, Overlay::None) {
-            return; // overlays swallow shortcuts
+        for (aktion, bind) in binds {
+            let ctrl_ok = bind.ctrl == mods.ctrl;
+            let shift_ok = bind.shift == mods.shift;
+            let alt_ok = bind.alt == mods.alt;
+            if ctrl_ok && shift_ok && alt_ok {
+                if let Some(key) = egui_key(&bind.taste) {
+                    if i.key_pressed(key) {
+                        return Some(aktion);
+                    }
+                }
+            }
         }
-        if mods.ctrl && i.key_pressed(Key::O) {
-            out = Some(Shortcut::OpenFolder);
-        } else if mods.ctrl && i.key_pressed(Key::P) {
-            out = Some(Shortcut::QuickSwitcher);
-        } else if mods.ctrl && i.key_pressed(Key::K) {
-            out = Some(Shortcut::CommandPalette);
-        } else if mods.ctrl && i.key_pressed(Key::S) {
-            out = Some(Shortcut::Save);
-        } else if mods.ctrl && i.key_pressed(Key::N) {
-            out = Some(Shortcut::NewNote);
-        } else if mods.ctrl && i.key_pressed(Key::E) {
-            out = Some(Shortcut::TogglePreview);
-        } else if mods.ctrl && mods.shift && i.key_pressed(Key::F) {
-            out = Some(Shortcut::FocusSearch);
-        } else if mods.ctrl && mods.shift && i.key_pressed(Key::S) {
-            out = Some(Shortcut::Einstellungen);
-        }
-    });
-    out
+        None
+    })
+}
+
+/// Serialisierter Name eines egui-Keys.
+fn key_name(key: Key) -> &'static str {
+    match key {
+        Key::A => "A", Key::B => "B", Key::C => "C", Key::D => "D",
+        Key::E => "E", Key::F => "F", Key::G => "G", Key::H => "H",
+        Key::I => "I", Key::J => "J", Key::K => "K", Key::L => "L",
+        Key::M => "M", Key::N => "N", Key::O => "O", Key::P => "P",
+        Key::Q => "Q", Key::R => "R", Key::S => "S", Key::T => "T",
+        Key::U => "U", Key::V => "V", Key::W => "W", Key::X => "X",
+        Key::Y => "Y", Key::Z => "Z",
+        Key::F1 => "F1", Key::F2 => "F2", Key::F3 => "F3", Key::F4 => "F4",
+        Key::F5 => "F5", Key::F6 => "F6", Key::F7 => "F7", Key::F8 => "F8",
+        Key::F9 => "F9", Key::F10 => "F10", Key::F11 => "F11", Key::F12 => "F12",
+        Key::ArrowDown => "ArrowDown", Key::ArrowUp => "ArrowUp",
+        Key::ArrowLeft => "ArrowLeft", Key::ArrowRight => "ArrowRight",
+        Key::Enter => "Enter", Key::Escape => "Escape",
+        Key::Tab => "Tab", Key::Space => "Space",
+        _ => "Unbekannt",
+    }
+}
+
+/// egui-Key aus dem serialisierten Namen.
+fn egui_key(name: &str) -> Option<Key> {
+    Some(match name {
+        "A" => Key::A, "B" => Key::B, "C" => Key::C, "D" => Key::D,
+        "E" => Key::E, "F" => Key::F, "G" => Key::G, "H" => Key::H,
+        "I" => Key::I, "J" => Key::J, "K" => Key::K, "L" => Key::L,
+        "M" => Key::M, "N" => Key::N, "O" => Key::O, "P" => Key::P,
+        "Q" => Key::Q, "R" => Key::R, "S" => Key::S, "T" => Key::T,
+        "U" => Key::U, "V" => Key::V, "W" => Key::W, "X" => Key::X,
+        "Y" => Key::Y, "Z" => Key::Z,
+        "F1" => Key::F1, "F2" => Key::F2, "F3" => Key::F3, "F4" => Key::F4,
+        "F5" => Key::F5, "F6" => Key::F6, "F7" => Key::F7, "F8" => Key::F8,
+        "F9" => Key::F9, "F10" => Key::F10, "F11" => Key::F11, "F12" => Key::F12,
+        "ArrowDown" => Key::ArrowDown, "ArrowUp" => Key::ArrowUp,
+        "ArrowLeft" => Key::ArrowLeft, "ArrowRight" => Key::ArrowRight,
+        "Enter" => Key::Enter, "Escape" => Key::Escape,
+        "Tab" => Key::Tab, "Space" => Key::Space,
+        _ => return None,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -698,10 +745,22 @@ impl App {
         };
 
         // Glossar-Treffer einmal pro Frame berechnen (Aho-Corasick, schnell).
-        let glossar_treffer: Vec<glossary::GlossarTreffer> = match (&self.glossar, &self.einst.werte) {
-            (Some(g), e) if e.glossar_aktiv && !g.ist_leer() => {
-                let mut treffer = g.finde(&text);
-                treffer.truncate(e.glossar_max_treffer);
+        let glossar_aktiv = self.einst.werte.glossar_aktiv;
+        let glossar_max = self.einst.werte.glossar_max_treffer;
+        let min_laenge = self.einst.werte.glossar_min_laenge;
+        let schrift_groesse = self.einst.werte.editor_schriftgroesse;
+        let glossar_treffer: Vec<glossary::GlossarTreffer> = match (&self.glossar, glossar_aktiv) {
+            (Some(g), true) if !g.ist_leer() => {
+                let mut treffer: Vec<glossary::GlossarTreffer> = g
+                    .finde(&text)
+                    .into_iter()
+                    .filter(|tr| tr.end - tr.start >= min_laenge * 2 || {
+                        // min_laenge zählt Zeichen; Byte-Länge kann abweichen (UTF-8)
+                        let s = &text[tr.start..tr.end];
+                        s.chars().count() >= min_laenge
+                    })
+                    .collect();
+                treffer.truncate(glossar_max);
                 treffer
             }
             _ => Vec::new(),
@@ -719,7 +778,10 @@ impl App {
                         glossary::Stil::Token(tok) => tok_color(tok),
                         glossary::Stil::Glossar => GLOSSAR_FARBE,
                     };
-                    let fmt = egui::TextFormat::simple(egui::FontId::monospace(14.0), farbe);
+                    let fmt = egui::TextFormat::simple(
+                        egui::FontId::monospace(schrift_groesse),
+                        farbe,
+                    );
                     job.append(&txt[s..e], 0.0, fmt);
                 }
                 job.wrap.max_width = wrap_width;
@@ -775,11 +837,16 @@ impl App {
                     });
                     ui.separator();
                 }
-                egui_commonmark::CommonMarkViewer::new().show(ui, &mut self.cache, body);
+                // Wikilinks zu klickbaren Links umschreiben.
+                let konvertiert = markdown::wikilinks_zu_md_links(body);
+                egui_commonmark::CommonMarkViewer::new().show(ui, &mut self.cache, &konvertiert);
 
                 // Klickbare Glossar-Verweise (virtuelle Links dieser Notiz):
                 if let Some(g) = &self.glossar {
-                    if self.einst.werte.glossar_aktiv && !g.ist_leer() {
+                    if self.einst.werte.glossar_aktiv
+                        && self.einst.werte.glossar_vorschau_liste
+                        && !g.ist_leer()
+                    {
                         let mut treffer = g.finde(body);
                         treffer.truncate(self.einst.werte.glossar_max_treffer);
                         if !treffer.is_empty() {
@@ -999,62 +1066,164 @@ impl App {
             Overlay::Einstellungen { mut entwurf } => {
                 let mut keep_open = true;
                 let mut schliessen = false;
+                let mut aufzeichnen: Option<Aktion> = None;
                 egui::Window::new(t::SETTINGS_TITLE)
-                    .anchor(egui::Align2::CENTER_TOP, [0.0, 60.0])
-                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_TOP, [0.0, 40.0])
+                    .default_size([540.0, 640.0])
+                    .resizable(true)
                     .collapsible(false)
                     .show(&ctx, |ui| {
-                        ui.set_min_width(420.0);
-                        ui.add_space(4.0);
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.set_min_width(490.0);
 
-                        ui.checkbox(&mut entwurf.vorschau_sichtbar, t::SET_PREVIEW);
-                        ui.checkbox(&mut entwurf.glossar_aktiv, t::SET_GLOSSAR);
-                        ui.add_enabled_ui(entwurf.glossar_aktiv, |ui| {
-                            ui.checkbox(&mut entwurf.glossar_case_insensitive, t::SET_GLOSSAR_CI);
+                            ui.heading("Allgemein");
+                            ui.checkbox(&mut entwurf.vorschau_sichtbar, t::SET_PREVIEW);
                             ui.horizontal(|ui| {
-                                ui.label(t::SET_GLOSSAR_MAX);
+                                ui.label(t::SET_AUTOSAVE);
                                 ui.add(
-                                    egui::DragValue::new(&mut entwurf.glossar_max_treffer)
-                                        .speed(10)
-                                        .range(10..=10_000),
+                                    egui::DragValue::new(&mut entwurf.autosave_ms)
+                                        .speed(100)
+                                        .range(0..=10_000)
+                                        .suffix(" ms"),
                                 );
                             });
-                        });
+                            ui.add_space(6.0);
+                            ui.separator();
 
-                        ui.add_space(8.0);
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            ui.label(t::SET_AUTOSAVE);
-                            let antwort = ui.add(
-                                egui::DragValue::new(&mut entwurf.autosave_ms)
-                                    .speed(100)
-                                    .range(0..=10_000)
-                                    .suffix(" ms"),
-                            );
-                            let _ = antwort;
-                        });
+                            ui.heading("Editor");
+                            ui.horizontal(|ui| {
+                                ui.label("Schriftgröße:");
+                                ui.add(
+                                    egui::DragValue::new(&mut entwurf.editor_schriftgroesse)
+                                        .speed(0.5)
+                                        .range(8.0..=32.0)
+                                        .suffix(" px"),
+                                );
+                            });
+                            ui.add_space(6.0);
+                            ui.separator();
 
-                        ui.add_space(8.0);
-                        ui.horizontal(|ui| {
+                            ui.heading("Glossar");
+                            ui.checkbox(&mut entwurf.glossar_aktiv, t::SET_GLOSSAR);
+                            ui.add_enabled_ui(entwurf.glossar_aktiv, |ui| {
+                                ui.checkbox(
+                                    &mut entwurf.glossar_case_insensitive,
+                                    t::SET_GLOSSAR_CI,
+                                );
+                                ui.checkbox(
+                                    &mut entwurf.glossar_vorschau_liste,
+                                    "Verweise unter der Vorschau anzeigen",
+                                );
+                                ui.horizontal(|ui| {
+                                    ui.label(t::SET_GLOSSAR_MAX);
+                                    ui.add(
+                                        egui::DragValue::new(&mut entwurf.glossar_max_treffer)
+                                            .speed(10)
+                                            .range(10..=10_000),
+                                    );
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Minimale Begriffslänge:");
+                                    ui.add(
+                                        egui::DragValue::new(&mut entwurf.glossar_min_laenge)
+                                            .range(1..=30),
+                                    );
+                                });
+                                ui.label("Glossar-Unterordner (einer pro Zeile, leer = gesamter Vault):");
+                                let mut ordner_text = entwurf.glossar_ordner.join("\n");
+                                let resp = ui.add(
+                                    egui::TextEdit::multiline(&mut ordner_text)
+                                        .desired_rows(3)
+                                        .desired_width(240.0),
+                                );
+                                if resp.changed() {
+                                    entwurf.glossar_ordner = ordner_text
+                                        .lines()
+                                        .map(|l| l.trim().trim_matches('/').to_string())
+                                        .filter(|l| !l.is_empty())
+                                        .collect();
+                                }
+                            });
+                            ui.add_space(6.0);
+                            ui.separator();
+
+                            ui.heading("Tastenkürzel");
+                            ui.label("Klick auf \u{201e}\u{c4}ndern\u{201c}, dann Taste drücken. Escape bricht ab.");
+                            egui::Grid::new("keybind_grid")
+                                .num_columns(3)
+                                .spacing([12.0, 4.0])
+                                .show(ui, |ui| {
+                                    for (aktion, name) in Aktion::ALLE {
+                                        let aktuell = entwurf
+                                            .bind_fuer(*aktion)
+                                            .map(|b| b.als_text())
+                                            .unwrap_or_else(|| "\u{2013}".into());
+                                        ui.label(*name);
+                                        ui.monospace(aktuell);
+                                        if ui.button("\u{c4}ndern").clicked() {
+                                            aufzeichnen = Some(*aktion);
+                                        }
+                                        ui.end_row();
+                                    }
+                                });
+                            ui.add_space(8.0);
                             if ui.button(t::SET_CLOSE).clicked() {
                                 schliessen = true;
                             }
                         });
                     });
 
+                // Tastenaufzeichnung:
+                if let Some(aktion) = aufzeichnen {
+                    self.keybind_aufzeichnen = Some(aktion);
+                }
+                if let Some(aktion) = self.keybind_aufzeichnen {
+                    let erfasst = ctx.input(|i| {
+                        let mods = i.modifiers;
+                        for key in [
+                            Key::A, Key::B, Key::C, Key::D, Key::E, Key::F, Key::G,
+                            Key::H, Key::I, Key::J, Key::K, Key::L, Key::M, Key::N,
+                            Key::O, Key::P, Key::Q, Key::R, Key::S, Key::T, Key::U,
+                            Key::V, Key::W, Key::X, Key::Y, Key::Z,
+                            Key::F1, Key::F2, Key::F3, Key::F4, Key::F5, Key::F6,
+                            Key::F7, Key::F8, Key::F9, Key::F10, Key::F11, Key::F12,
+                            Key::ArrowDown, Key::ArrowUp, Key::ArrowLeft, Key::ArrowRight,
+                            Key::Enter, Key::Escape, Key::Tab, Key::Space,
+                        ] {
+                            if i.key_pressed(key) {
+                                return Some((mods, key));
+                            }
+                        }
+                        None
+                    });
+                    if let Some((mods, key)) = erfasst {
+                        if key != Key::Escape {
+                            entwurf.setze_bind(
+                                aktion,
+                                Some(Keybind::neu(mods.ctrl, mods.shift, mods.alt, key_name(key))),
+                            );
+                        }
+                        self.keybind_aufzeichnen = None;
+                    } else {
+                        self.keybind_aufzeichnen = Some(aktion);
+                    }
+                }
+
                 if schliessen {
-                    // Dirty nur bei tatsächlicher Änderung:
                     if entwurf != self.einst.werte {
                         let glossar_neu = entwurf.glossar_aktiv
                             != self.einst.werte.glossar_aktiv
                             || entwurf.glossar_case_insensitive
-                                != self.einst.werte.glossar_case_insensitive;
+                                != self.einst.werte.glossar_case_insensitive
+                            || entwurf.glossar_ordner != self.einst.werte.glossar_ordner
+                            || entwurf.glossar_min_laenge != self.einst.werte.glossar_min_laenge;
                         self.einst.werte = entwurf.clone();
                         self.einst.markiere_dirty();
                         if glossar_neu {
                             self.glossar_erneuern();
                         }
                     }
+                    self.keybind_aufzeichnen = None;
                     keep_open = false;
                 }
                 self.overlay = if keep_open {
@@ -1117,6 +1286,65 @@ impl App {
         self.overlay = Overlay::Einstellungen {
             entwurf: self.einst.werte.clone(),
         };
+    }
+
+    /// Führt eine Aktion aus (Keybinds, Befehlspalette).
+    fn aktion_ausfuehren(&mut self, aktion: Aktion) {
+        match aktion {
+            Aktion::OrdnerOeffnen => self.open_folder_dialog_and_load(),
+            Aktion::Schnellwechsler => {
+                self.overlay = Overlay::Switcher;
+                self.switcher_query.clear();
+                self.switcher_selected = 0;
+            }
+            Aktion::Befehlspalette => {
+                self.overlay = Overlay::CommandPalette;
+                self.switcher_query.clear();
+                self.switcher_selected = 0;
+            }
+            Aktion::Speichern => self.save_active(),
+            Aktion::NeueNotiz => self.create_note_flow(),
+            Aktion::VorschauUmschalten => {
+                self.preview_visible = !self.preview_visible;
+                self.einst.werte.vorschau_sichtbar = self.preview_visible;
+                self.einst.markiere_dirty();
+            }
+            Aktion::SucheFokussieren => self.sidebar_tab = SidebarTab::Search,
+            Aktion::Einstellungen => self.einstellungen_oeffnen(),
+            Aktion::NotizSchliessen => self.active = None,
+            Aktion::NaechsteNotiz => self.naechste_notiz(1),
+            Aktion::VorherigeNotiz => self.naechste_notiz(-1),
+            Aktion::GlossarUmschalten => {
+                self.einst.werte.glossar_aktiv = !self.einst.werte.glossar_aktiv;
+                self.einst.markiere_dirty();
+                self.glossar_erneuern();
+                self.status = if self.einst.werte.glossar_aktiv {
+                    "Glossar aktiviert".into()
+                } else {
+                    "Glossar deaktiviert".into()
+                };
+            }
+        }
+    }
+
+    /// Springt in der sortierten Notizliste vor/zurück.
+    fn naechste_notiz(&mut self, richtung: i32) {
+        let Some(v) = self.vault.as_ref() else {
+            return;
+        };
+        let notizen: Vec<PathBuf> = v.notes().iter().map(|n| n.abs.clone()).collect();
+        if notizen.is_empty() {
+            return;
+        }
+        let idx = self
+            .active
+            .as_ref()
+            .and_then(|a| notizen.iter().position(|p| p == a))
+            .map(|i| i as i32)
+            .unwrap_or(-richtung);
+        let neu = (idx + richtung).rem_euclid(notizen.len() as i32) as usize;
+        let ziel = notizen[neu].clone();
+        self.open_note(ziel);
     }
 }
 

@@ -17,6 +17,8 @@ static WIKILINK_RE: LazyLock<Regex> =
 pub struct FrontMatter {
     pub title: Option<String>,
     pub tags: Vec<String>,
+    /// Obsidian-kompatible Aliase (`aliases: [a, b]` oder Blockliste).
+    pub aliases: Vec<String>,
 }
 
 /// Split a document into `(front_matter, body)` when it starts with `---`.
@@ -48,6 +50,7 @@ fn unquote(s: &str) -> String {
 pub fn parse_front_matter(raw: &str) -> FrontMatter {
     let mut fm = FrontMatter::default();
     let mut in_tag_block = false;
+    let mut in_alias_block = false;
     for line in raw.lines() {
         let line = line.trim();
         if line.is_empty() {
@@ -63,10 +66,33 @@ pub fn parse_front_matter(raw: &str) -> FrontMatter {
             }
             in_tag_block = false;
         }
+        if in_alias_block {
+            if let Some(item) = line.strip_prefix("- ") {
+                let item = item.trim();
+                if !item.is_empty() {
+                    fm.aliases.push(unquote(item));
+                }
+                continue;
+            }
+            in_alias_block = false;
+        }
         if let Some((key, value)) = line.split_once(':') {
             let value = value.trim();
             match key.trim() {
                 "title" if !value.is_empty() => fm.title = Some(unquote(value)),
+                "aliases" => {
+                    if value.is_empty() {
+                        in_alias_block = true;
+                    } else {
+                        fm.aliases = unquote(value)
+                            .trim_start_matches('[')
+                            .trim_end_matches(']')
+                            .split(',')
+                            .map(|a| unquote(a.trim()))
+                            .filter(|a| !a.is_empty())
+                            .collect();
+                    }
+                }
                 "tags" => {
                     if value.is_empty() {
                         in_tag_block = true;
@@ -97,6 +123,80 @@ pub fn extract_wikilinks(body: &str) -> Vec<String> {
         .map(|m| m.as_str().trim().to_string())
         .filter(|s| !s.is_empty())
         .collect()
+}
+
+/// Wandelt `[[Ziel]]` / `[[Ziel|Alias]]` in Markdown-Links mit dem
+/// Schema `rusty-note:` um (klickbar in egui_commonmark). Code-Spans und
+/// Code-Blöcke bleiben unverändert; bereits existierende `[..](..)`-Links
+/// werden nicht angetastet, da `[[` in ihnen nicht als Wikilink zählt.
+pub fn wikilinks_zu_md_links(text: &str) -> String {
+    if !text.contains("[[") {
+        return text.to_string();
+    }
+    let bytes = text.as_bytes();
+    let len = bytes.len();
+    let mut out = String::with_capacity(len);
+    let mut i = 0usize;
+    while i < len {
+        match bytes[i] {
+            b'`' => {
+                // Zaun oder Inline-Code 1:1 kopieren
+                if i + 2 < len && &bytes[i..i + 3] == b"```" {
+                    let start = i;
+                    i += 3;
+                    while i + 2 < len && &bytes[i..i + 3] != b"```" {
+                        i += 1;
+                    }
+                    i = (i + 3).min(len);
+                    out.push_str(&text[start..i]);
+                } else {
+                    let start = i;
+                    i += 1;
+                    while i < len && bytes[i] != b'`' {
+                        i += 1;
+                    }
+                    i = (i + 1).min(len);
+                    out.push_str(&text[start..i]);
+                }
+            }
+            b'[' if i + 1 < len && bytes[i + 1] == b'[' => {
+                let start = i;
+                i += 2;
+                let mut ziel = None;
+                while i + 1 < len && &bytes[i..i + 2] != b"]]" {
+                    i += 1;
+                }
+                if i + 1 < len {
+                    ziel = Some(&text[start + 2..i]);
+                    i += 2;
+                }
+                match ziel {
+                    Some(z) => {
+                        let z = z.trim();
+                        let (target, label) = match z.split_once('|') {
+                            Some((t, l)) => (t.trim(), l.trim()),
+                            None => (z, z),
+                        };
+                        out.push('[');
+                        out.push_str(label);
+                        out.push_str("](<rusty-note:");
+                        out.push_str(target);
+                        out.push('>');
+                        out.push(')');
+                    }
+                    None => out.push_str(&text[start..i]),
+                }
+            }
+            _ => {
+                let start = i;
+                while i < len && bytes[i] != b'`' && !(bytes[i] == b'[' && i + 1 < len && bytes[i + 1] == b'[') {
+                    i += 1;
+                }
+                out.push_str(&text[start..i.max(start)]);
+            }
+        }
+    }
+    out
 }
 
 fn file_stem_str(p: &Path) -> &str {
@@ -193,5 +293,42 @@ mod tests {
         let hit =
             resolve_wikilink(notes.iter().map(|p| p.as_path()), "rust gui").expect("substring");
         assert_eq!(hit, PathBuf::from("/v/Rust GUI Notes.md"));
+    }
+}
+
+#[cfg(test)]
+mod alias_und_wikilink_tests {
+    use super::*;
+
+    #[test]
+    fn aliases_werken_aus_front_matter_gelesen() {
+        let fm = parse_front_matter("aliases: [egui, EGUI-Framework]");
+        assert_eq!(fm.aliases, vec!["egui".to_string(), "EGUI-Framework".to_string()]);
+
+        let fm2 = parse_front_matter("aliases:\n  - Erster\n  - Zweiter");
+        assert_eq!(fm2.aliases, vec!["Erster".to_string(), "Zweiter".to_string()]);
+    }
+
+    #[test]
+    fn aliases_leer_ohne_angabe() {
+        assert!(parse_front_matter("title: x").aliases.is_empty());
+    }
+
+    #[test]
+    fn wikilinks_werden_zu_klickbaren_md_links() {
+        let text = "Siehe [[Rust GUI Notes]] und [[Rust|die Sprache]].";
+        let out = wikilinks_zu_md_links(text);
+        assert!(out.contains("[Rust GUI Notes](<rusty-note:Rust GUI Notes>)"), "{}", out);
+        assert!(out.contains("[die Sprache](<rusty-note:Rust>)"), "{}", out);
+        assert!(!out.contains("[["));
+    }
+
+    #[test]
+    fn wikilink_konvertierung_touchiert_code_nicht() {
+        let text = "`[[KeinLink]]` und ```\n[[AuchNicht]]\n```\naber [[Doch]].";
+        let out = wikilinks_zu_md_links(text);
+        assert!(out.contains("`[[KeinLink]]`"));
+        assert!(out.contains("[[AuchNicht]]"));
+        assert!(out.contains("[Doch](<rusty-note:Doch>)"));
     }
 }

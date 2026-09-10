@@ -12,6 +12,8 @@ use aho_corasick::{AhoCorasick, MatchKind};
 #[derive(Debug, Clone, PartialEq)]
 pub struct GlossarEintrag {
     pub begriff: String,
+    /// Zusätzliche Schreibweisen, die denselben Eintrag treffen.
+    pub aliase: Vec<String>,
     pub pfad: PathBuf,
 }
 
@@ -56,6 +58,8 @@ fn ist_wortzeichen(b: u8) -> bool {
 pub struct Glossar {
     ac: AhoCorasick,
     eintraege: Vec<GlossarEintrag>,
+    /// AC-Muster-Index -> Index in `eintraege` (Aliase teilen sich den Eintrag).
+    muster_zu_eintrag: Vec<usize>,
     case_insensitive: bool,
 }
 
@@ -65,6 +69,7 @@ impl Glossar {
     pub fn neu(eintraege: Vec<GlossarEintrag>, case_insensitive: bool) -> Glossar {
         let mut gesehen = std::collections::HashSet::new();
         let mut muster: Vec<Vec<u8>> = Vec::new();
+        let mut muster_zu_eintrag: Vec<usize> = Vec::new();
         let mut gefiltert: Vec<GlossarEintrag> = Vec::new();
         for e in eintraege {
             let begriff = e.begriff.trim();
@@ -79,11 +84,31 @@ impl Glossar {
             if !gesehen.insert(bytes.clone()) {
                 continue;
             }
+            let eintrag_idx = gefiltert.len();
             muster.push(bytes);
+            muster_zu_eintrag.push(eintrag_idx);
             gefiltert.push(GlossarEintrag {
                 begriff: begriff.to_string(),
+                aliase: e.aliase.clone(),
                 pfad: e.pfad,
             });
+            // Aliase als zusätzliche Muster; index zeigt auf denselben Eintrag.
+            for alias in &e.aliase {
+                let alias = alias.trim();
+                if alias.is_empty() {
+                    continue;
+                }
+                let alias_bytes = if case_insensitive {
+                    klein_bytes(alias.as_bytes())
+                } else {
+                    alias.as_bytes().to_vec()
+                };
+                if !gesehen.insert(alias_bytes.clone()) {
+                    continue;
+                }
+                muster.push(alias_bytes);
+                muster_zu_eintrag.push(eintrag_idx);
+            }
         }
         let ac = AhoCorasick::builder()
             .match_kind(MatchKind::LeftmostLongest)
@@ -92,6 +117,7 @@ impl Glossar {
         Glossar {
             ac,
             eintraege: gefiltert,
+            muster_zu_eintrag,
             case_insensitive,
         }
     }
@@ -136,10 +162,16 @@ impl Glossar {
             if geschuetzt_treffer(&geschuetzt, m.start(), m.end()) {
                 continue;
             }
+            let muster_idx = m.pattern().as_usize();
+            let eintrag_idx = self
+                .muster_zu_eintrag
+                .get(muster_idx)
+                .copied()
+                .unwrap_or(muster_idx);
             treffer.push(GlossarTreffer {
                 start: m.start(),
                 end: m.end(),
-                index: m.pattern().as_usize(),
+                index: eintrag_idx,
             });
         }
         treffer
@@ -228,6 +260,7 @@ mod tests {
                 .iter()
                 .map(|(b, p)| GlossarEintrag {
                     begriff: b.to_string(),
+                    aliase: Vec::new(),
                     pfad: PathBuf::from(p),
                 })
                 .collect(),
@@ -435,5 +468,65 @@ mod verschneide_tests {
                 (10, 12, Stil::Token(Tok::Plain)),
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod glossar_ordner_tests {
+    use super::*;
+
+    #[test]
+    fn glossareintrag_hat_aliase() {
+        let e = GlossarEintrag {
+            begriff: "Rust".into(),
+            aliase: vec!["rustlang".into(), "RustLang".into()],
+            pfad: PathBuf::from("/v/Rust.md"),
+        };
+        assert_eq!(e.aliase.len(), 2);
+    }
+
+    #[test]
+    fn aliase_werden_als_muster_indiziert() {
+        let gl = Glossar::neu(
+            vec![GlossarEintrag {
+                begriff: "Rust".into(),
+                aliase: vec!["Ferris-Sprache".into()],
+                pfad: PathBuf::from("/v/Rust.md"),
+            }],
+            true,
+        );
+        // Begriff UND Alias treffen, beide auf denselben Eintrag:
+        let t1 = gl.finde("Rust ist toll");
+        let t2 = gl.finde("Die Ferris-Sprache ist toll");
+        assert_eq!(t1.len(), 1);
+        assert_eq!(t2.len(), 1);
+        assert_eq!(t1[0].index, t2[0].index);
+    }
+
+    #[test]
+    fn glossar_ordner_filtert_notizen() {
+        use crate::vault::Vault;
+        use std::fs;
+        use std::path::PathBuf;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::{SystemTime, UNIX_EPOCH};
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let n = N.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("rusty-glossar-{}-{}", 
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(), n));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("Rust.md"), "# Rust").unwrap();
+        fs::create_dir_all(dir.join("Glossar")).unwrap();
+        fs::write(dir.join("Glossar/egui.md"), "# egui").unwrap();
+        fs::write(dir.join("Willkommen.md"), "# Hi").unwrap();
+
+        let mut v = Vault::open(&dir).unwrap();
+        v.scan().unwrap();
+        let glossar_notizen: Vec<_> = v
+            .notizen_aus(&["Glossar".to_string()])
+            .into_iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(glossar_notizen, vec!["egui.md"]);
     }
 }

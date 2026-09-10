@@ -82,6 +82,24 @@ impl Vault {
         &self.notes
     }
 
+    /// Notizen, die in einem der angegebenen Ordner liegen (relativer Pfad,
+    /// '/'-getrennt; "Glossar" matcht auch "Glossar/Sub"). Leere Liste = alle.
+    pub fn notizen_aus(&self, ordner: &[String]) -> Vec<PathBuf> {
+        if ordner.is_empty() {
+            return self.notes.iter().map(|n| n.abs.clone()).collect();
+        }
+        self.notes
+            .iter()
+            .filter(|n| {
+                ordner.iter().any(|o| {
+                    let o = o.trim_matches('/');
+                    !o.is_empty() && (n.rel == o || n.rel.starts_with(&format!("{}/", o)))
+                })
+            })
+            .map(|n| n.abs.clone())
+            .collect()
+    }
+
     /// Rescan the folder tree, skipping hidden entries and non-`.md` files.
     pub fn scan(&mut self) -> io::Result<()> {
         let mut notes = Vec::new();
