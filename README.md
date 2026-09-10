@@ -1,29 +1,18 @@
 # rusty-notes
 
-Ein schneller, tastaturgetriebener Markdown-Notiz-Editor in Rust.
-Inspiriert von Obsidian (Vault + Wikilinks), Zen Notes (minimale Oberfläche)
-und Zettlr (Schreibfokus).
+Ein schneller Markdown-Notiz-Editor in Rust.
+Inspiriert von Obsidian, Zen Notes, Zettlr.
 
 ## Wikilinks & Glossar
 
-`[[Ziel]]` und `[[Ziel|Alias]]` werden in der Vorschau als **klickbare
-Links** gerendert (über Link-Hooks von egui_commonmark — keine Shell-Aufrufe).
-Unbekannte Ziele werden per exakter Stamm-Match, dann Groß-/Klein-insensitivem
-Teilstring aufgelöst.
+`[[Ziel]]` und `[[Ziel|Alias]]` werden in der Vorschau als **klickbare Links** gerendert (über Link-Hooks von egui_commonmark — keine Shell-Aufrufe).
+Unbekannte Ziele werden per exakter Stamm-Match, dann Groß-/Klein-insensitivem Teilstring aufgelöst.
 
 ## Glossar (virtuelle Verlinkung)
 
-Angelehnt an das Obsidian-Plugin *Virtual Linker / Glossary*, aber neu
-gedacht: Ein **Aho-Corasick-Automat** findet alle Glossar-Begriffe in einem
-einzigen Durchlauf (O(Textlänge)), statt jeden Begriff einzeln zu suchen.
+Angelehnt an das Obsidian-Plugin *Virtual Linker / Glossary*, aber neu gedacht: Ein **Aho-Corasick-Automat** findet alle Glossar-Begriffe in einem einzigen Durchlauf (O(Textlänge)), statt jeden Begriff einzeln zu suchen.
 
-Glossar-Quelle ist ein **Unterordner** (Standard `Glossar`, in den
-Einstellungen konfigurierbar, mehrere Ordner möglich). Begriffe sind die
-Notiz-Namen, zusätzliche Schreibweisen kommen aus dem Front-Matter
-(`aliases: [a, b]`). Begriffe werden im Editor **grün** markiert und optional
-unter der Vorschau als klickbare Verweise aufgelistet — der Text selbst bleibt
-nicht verändert. Code-Blöcke, Inline-Code und bestehende Links werden nie
-verlinkt.
+Glossar-Quelle ist ein **Unterordner** (Standard `Glossar`, in den Einstellungen konfigurierbar, mehrere Ordner möglich). Begriffe sind die Notiz-Namen, zusätzliche Schreibweisen kommen aus dem Front-Matter (`aliases: [a, b]`). Begriffe werden im Editor **grün** markiert und optional unter der Vorschau als klickbare Verweise aufgelistet — der Text selbst bleibt nicht verändert. Code-Blöcke, Inline-Code und bestehende Links werden nie verlinkt.
 
 ### Einstellungen (Auszug)
 
@@ -31,16 +20,13 @@ verlinkt.
 - Editor: Schriftgröße
 - Glossar: aktiv, Groß-/Kleinschreibung, Vorschau-Liste, max. Treffer,
   Mindestbegriffslänge, Glossar-Unterordner (Zeilenliste)
-- Tastenkürzel: alle 12 Aktionen frei belegbar (Aufzeichnung per Klick auf
-  „Ändern", dann Taste drücken; Escape bricht ab). Fehlende Keybinds in alten
-  Configs werden automatisch mit der Standard-Belegung aufgefüllt.
+- Tastenkürzel: alle 12 Aktionen frei belegbar (Aufzeichnung per Klick auf   „Ändern", dann Taste drücken; Escape bricht ab). Fehlende Keybinds in alten   Configs werden automatisch mit der Standard-Belegung aufgefüllt.
 
 ![status](https://img.shields.io/badge/tests-27%20passing-brightgreen)
 
 ## Design goals
 
-- **Speed first**: GPU-rendered (wgpu), incremental syntax highlighting, no
-  file locks, debounced autosave. Release build starts instantly.
+- **Speed first**: GPU-rendered (wgpu), incremental syntax highlighting, no   file locks, debounced autosave. Release build starts instantly.
 - **Plain files**: your notes are ordinary `.md` files in a folder ("vault").
   No database, no vendor lock-in.
 - **Keyboard-driven**: every core action has a shortcut.
@@ -51,8 +37,7 @@ verlinkt.
 cargo build --release
 ```
 
-Runtime deps: standard Linux graphics stack (Wayland or X11) and `zenity`
-for the folder-picker dialog (present on virtually all desktop distros).
+Runtime deps: standard Linux graphics stack (Wayland or X11) and `zenity` for the folder-picker dialog (present on virtually all desktop distros).
 
 ## Run
 
@@ -60,10 +45,8 @@ for the folder-picker dialog (present on virtually all desktop distros).
 ./target/release/rusty-notes
 ```
 
-- First start: click **Open Folder** and choose any folder containing `.md`
-  files (subfolders are scanned; hidden files/folders are ignored).
-- The vault is remembered and reopened on the next start
-  (`~/.config/rusty-notes/config.json`).
+- First start: click **Open Folder** and choose any folder containing `.md` files (subfolders are scanned; hidden files/folders are ignored).
+- The vault is remembered and reopened on the next start   (`~/.config/rusty-notes/config.json`).
 
 ## Shortcuts
 
@@ -83,18 +66,14 @@ for the folder-picker dialog (present on virtually all desktop distros).
 | `Ctrl+Shift+Y` | Synchronisiertes Scrollen umschalten |
 
 Alle Belegungen sind in den Einstellungen frei änderbar (Klick auf „Ändern",
-dann Taste drücken; `Escape` bricht ab). Fehlende Keybinds in alten Configs
-werden automatisch mit der Standard-Belegung aufgefüllt.
+dann Taste drücken; `Escape` bricht ab). Fehlende Keybinds in alten Configs werden automatisch mit der Standard-Belegung aufgefüllt.
 
 ## Features
 
 - Live Markdown syntax highlighting while you type
-- **Editor-Codeblöcke**: ` ``` ` -Blöcke werden im Editor mit syntect
-  (Sprachautodetektion) farbig hervorgehoben
-- **Klickbare Wikilinks im Editor**: `Strg+Klick` / Mittelklick auf eine
-  `[[Ziel]]`-Referenz öffnet die Zielnotiz direkt
-- **Strg+Hover-Popup**: zeigt beim Zeigen auf eine `[[Ziel]]`-Referenz eine
-  Vorschau der Zielnotiz (inkl. „Notiz erstellen", falls das Ziel fehlt)
+- **Editor-Codeblöcke**: ` ``` ` -Blöcke werden im Editor mit syntect   (Sprachautodetektion) farbig hervorgehoben
+- **Klickbare Wikilinks im Editor**: `Strg+Klick` / Mittelklick auf eine   `[[Ziel]]`-Referenz öffnet die Zielnotiz direkt
+- **Strg+Hover-Popup**: zeigt beim Zeigen auf eine `[[Ziel]]`-Referenz eine   Vorschau der Zielnotiz (inkl. „Notiz erstellen", falls das Ziel fehlt)
 - **Synchronisiertes Scrollen**: Editor und Vorschau scrollen gemeinsam;
   per `Strg+Shift+Y` oder Checkbox in den Einstellungen ein-/ausschaltbar
 - Live rendered preview (CommonMark + strikethrough + tables) via egui_commonmark
@@ -120,14 +99,11 @@ src/
 tests/bug_tests.rs    Regressionstests für gefundene Bugs
 ```
 
-Alle Logik-Module sind rein und unit-getestet (52 Tests); die UI ist eine
-dünne Schale darüber. `cargo test` läuft alles.
+Alle Logik-Module sind rein und unit-getestet (52 Tests); die UI ist eine dünne Schale darüber. `cargo test` läuft alles.
 
 ## Windows-Build
 
-Der Code kompiliert für `x86_64-pc-windows-msvc` (geprüft per
-`cargo check --target x86_64-pc-windows-msvc`): Der Ordner-Dialog nutzt dort
-den nativen Win32-Dialog (rfd), unter Linux zenity.
+Der Code kompiliert für `x86_64-pc-windows-msvc` (geprüft per `cargo check --target x86_64-pc-windows-msvc`): Der Ordner-Dialog nutzt dort den nativen Win32-Dialog (rfd), unter Linux zenity.
 
 ```sh
 rustup target add x86_64-pc-windows-msvc
