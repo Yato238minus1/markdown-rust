@@ -97,6 +97,7 @@ struct App {
     dirty_at: Option<std::time::Instant>,
     cache: CommonMarkCache,
     pending_link: Option<PathBuf>,
+    focus_editor_once: bool,
 }
 
 impl Default for App {
@@ -116,6 +117,7 @@ impl Default for App {
             dirty_at: None,
             cache: CommonMarkCache::default(),
             pending_link: None,
+            focus_editor_once: false,
         }
         // last_vault is applied in `new()` below
         .with_last_vault(cfg.last_vault)
@@ -178,6 +180,7 @@ impl App {
         if let Some(v) = self.vault.as_mut() {
             if v.open_note(&abs).is_ok() {
                 self.active = Some(abs);
+                self.focus_editor_once = true;
             } else {
                 self.status = "Failed to open note".into();
             }
@@ -230,6 +233,7 @@ impl App {
                     match v.create_note(&rel) {
                         Ok(path) => {
                             self.active = Some(path);
+                            self.focus_editor_once = true;
                             self.status = format!("Created {}", rel);
                         }
                         Err(e) => self.status = format!("Create failed: {}", e),
@@ -679,14 +683,16 @@ impl App {
                 ui.fonts_mut(|f| f.layout_job(job))
             };
 
-        let edited = ui
-            .add(
-                egui::TextEdit::multiline(&mut text)
-                    .font(egui::TextStyle::Monospace)
-                    .layouter(&mut layouter)
-                    .desired_width(f32::INFINITY),
-            )
-            .changed();
+        let editor = egui::TextEdit::multiline(&mut text)
+            .font(egui::TextStyle::Monospace)
+            .layouter(&mut layouter)
+            .desired_width(f32::INFINITY);
+        let editor_resp = ui.add(editor);
+        if self.focus_editor_once {
+            editor_resp.request_focus();
+            self.focus_editor_once = false;
+        }
+        let edited = editor_resp.changed();
 
         if edited {
             if let Some(v) = self.vault.as_mut() {
