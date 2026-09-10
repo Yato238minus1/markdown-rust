@@ -231,12 +231,13 @@ pub fn highlight(text: &str) -> Vec<Span> {
 
         if is_fence(line) {
             sb.push(pos, line_end, Tok::CodeBlock);
-            in_fence = if in_fence {
-                let opens_new = line.trim_start()[3..].trim_start().starts_with("```");
-                !opens_new
+            if in_fence {
+                // Schließender Fence — außer er beginnt selbst mit neuem
+                // Fence-Marker direkt dahinter (verschachtelt nicht unterstützt).
+                in_fence = false;
             } else {
-                true
-            };
+                in_fence = true;
+            }
         } else if in_fence {
             sb.push(pos, line_end, Tok::CodeBlock);
         } else if is_atx_heading(line) {
@@ -270,7 +271,14 @@ pub fn highlight(text: &str) -> Vec<Span> {
         }
 
         if line_end < len {
-            sb.push(line_end, line_end + 1, Tok::Plain); // the newline itself
+            // Der Umbruch gehört zum CodeBlock, wenn die Zeile Teil eines
+            // Blocks war (auch der schließende Fence selbst).
+            let zeile_war_block = in_fence || is_fence(line);
+            if zeile_war_block {
+                sb.push(line_end, line_end + 1, Tok::CodeBlock);
+            } else {
+                sb.push(line_end, line_end + 1, Tok::Plain); // the newline itself
+            }
             pos = line_end + 1;
         } else {
             pos = line_end;
@@ -358,5 +366,41 @@ mod tests {
             .filter(|s| s.tok == Tok::CodeBlock && text[s.start..s.end].contains("var"))
             .collect();
         assert_eq!(code.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod fence_tests {
+    use super::*;
+
+    #[test]
+    fn code_block_endet_beim_schliessenden_fence() {
+        let text = "```rust\nlet x = 1;\n```\nnachher\n";
+        let spans = highlight(text);
+        let nachher: Vec<_> = spans
+            .iter()
+            .filter(|s| text[s.start..s.end].contains("nachher"))
+            .collect();
+        assert!(!nachher.is_empty());
+        assert!(
+            nachher.iter().all(|s| s.tok != Tok::CodeBlock),
+            "'nachher' darf nicht CodeBlock sein: {:?}",
+            nachher
+        );
+    }
+
+    #[test]
+    fn umbrueche_innerhalb_des_blocks_sind_codeblock() {
+        let text = "```js\na;\nb;\n```\n";
+        let spans = highlight(text);
+        let nl: Vec<_> = spans
+            .iter()
+            .filter(|s| text[s.start..s.end] == *"\n")
+            .collect();
+        assert!(
+            nl.iter().all(|s| s.tok == Tok::CodeBlock),
+            "Zeilenumbrüche im Block gehören zum Block: {:?}",
+            nl
+        );
     }
 }

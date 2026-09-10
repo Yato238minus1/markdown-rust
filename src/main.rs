@@ -83,6 +83,17 @@ struct App {
     hover_link: Option<(String, egui::Pos2)>,
     /// Sync-Scroll: letzter geteilter Scroll-Stand der Editor-/Vorschau-Ansicht.
     sync_scroll: f32,
+    /// Letzter Sync-Anteil, um Editor-Änderungen zu erkennen (Some = geändert).
+    sync_letzter: Option<f32>,
+    /// True im Frame nach einer Editor-Scroll-Änderung.
+    sync_geaendert: bool,
+    /// Letzte gemessene Vorschau-Maße (content, sichtbar) für Ziel-Offset-Berechnung.
+    vorschau_mass: VorschauMass,
+}
+
+#[derive(Default)]
+struct VorschauMass {
+    last: Option<(f32, f32)>,
 }
 
 impl Default for App {
@@ -110,6 +121,9 @@ impl Default for App {
             keybind_aufzeichnen: None,
             hover_link: None,
             sync_scroll: 0.0,
+            sync_letzter: None,
+            sync_geaendert: false,
+            vorschau_mass: VorschauMass::default(),
         }
         .with_last_vault(last_vault)
     }
@@ -623,6 +637,10 @@ impl eframe::App for App {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
     }
+
+    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Kein Zusatzbedarf; Shortcuts laufen in ui().
+    }
 }
 
 /// Prüft alle Keybinds aus den Einstellungen gegen den Tastaturzustand.
@@ -842,61 +860,92 @@ impl App {
                     glossary::verschneide(&spans, &glossar_treffer, txt.len());
                 let mut job = egui::text::LayoutJob::default();
 
-                // Für CodeBlock-Bereiche: syntect-Färbung pro Block vorbereiten.
-                // Cache: (Block-Start, Infostring, Code) -> FarbSpannen.
-                let mut code_farben: Vec<(usize, usize, Vec<(usize, usize, [u8; 4])>)> = Vec::new();
+                // Codeblöcke mit syntect einfärben. Dank korrigierter
+                // Fence-Spans ist jeder Block EINE zusammenhängende Span
+                // "```info\n...```". Inhalt = nach erster Zeile bis vor "```".
+                let mut code_farben: Vec<(usize, usize, [u8; 4])> = Vec::new();
                 for s in spans.iter() {
-                    if s.tok == Tok::CodeBlock {
-                        // Block-Inhalt extrahieren: ```info\n...```
-                        let blocktxt = &txt[s.start..s.end];
-                        if let Some(zeile_ende) = blocktxt.find('\n') {
-                            let info = blocktxt[3..zeile_ende].trim();
-                            let inhalt_start = s.start + zeile_ende + 1;
-                            let inhalt = &txt[inhalt_start..s.end];
-                            let farben: Vec<(usize, usize, [u8; 4])> = CODE_HIGHLIGHTER
-                                .highlight(inhalt, info)
-                                .into_iter()
-                                .map(|f| (inhalt_start + f.start, inhalt_start + f.end, f.farbe))
-                                .collect();
-                            code_farben.push((s.start, s.end, farben));
+                    if s.tok != Tok::CodeBlock {
+                        continue;
+                    }
+                    let block = &txt[s.start..s.end];
+                    let Some(zeile_ende) = block.find('\n') else {
+                        continue; // einzeiliger Fence ohne Inhalt
+                    };
+                    let info = block[3..zeile_ende].trim();
+                    // Inhalt: nach Infostring bis vor dem schließenden ``` .
+                    // Die Fence-Span endet exakt auf dem schließenden "```" (siehe
+                    // editor.rs), also drei Bytes vor block.ende.
+                    let fence_ende = block.len().saturating_sub(3);
+                    let inhalt = &block[zeile_ende + 1..fence_ende]
+                        .strip_suffix('\n')
+                        .unwrap_or(&block[zeile_ende + 1..fence_ende]);
+                    let basis = s.start + zeile_ende + 1;
+                    if info.is_empty() {
+                        continue; // ohne Sprache: Standardfarbe belassen
+                    }
+                    for f in CODE_HIGHLIGHTER.highlight(inhalt, info) {
+                        code_farben.push((basis + f.start, basis + f.end, f.farbe));
+                    }
+                }
+
+                // Stückelung mit Code-Farbgrenzen verschneiden:
+                let mut final_stuecke: Vec<(usize, usize, Color32)> = Vec::new();
+                for (s, e, stil) in stuecke {
+                    if stil != glossary::Stil::Token(Tok::CodeBlock) {
+                        let farbe = match stil {
+                            glossary::Stil::Glossar => GLOSSAR_FARBE,
+                            glossary::Stil::Token(tok) => tok_color(tok),
+                        };
+                        final_stuecke.push((s, e, farbe));
+                        continue;
+                    }
+                    // CodeBlock-Abschnitt in syntect-Farben zerlegen:
+                    let mut cursor = s;
+                    while cursor < e {
+                        // Passende Farbspanne am cursor finden:
+                        let mut naechste_grenze = e;
+                        let mut farbe = tok_color(Tok::CodeBlock);
+                        for (fs, fe, f) in &code_farben {
+                            if *fs <= cursor && cursor < *fe {
+                                farbe = Color32::from_rgba_unmultiplied(f[0], f[1], f[2], f[3]);
+                                naechste_grenze = (*fe).min(e);
+                                break;
+                            }
+                        }
+                        if naechste_grenze == e && farbe == tok_color(Tok::CodeBlock) {
+                            // cursor liegt zwischen syntect-Spans: bis zur nächsten Spanne
+                            let mut grenze = e;
+                            for (fs, _fe, f) in &code_farben {
+                                if *fs > cursor && *fs < grenze {
+                                    grenze = *fs;
+                                    farbe = Color32::from_rgba_unmultiplied(f[0], f[1], f[2], f[3]);
+                                }
+                            }
+                            naechste_grenze = grenze;
+                            if grenze == e {
+                                farbe = tok_color(Tok::CodeBlock);
+                            } else {
+                                // Farbe der kommenden Spanne übernehmen:
+                                for (fs, fe, f) in &code_farben {
+                                    if *fs == grenze {
+                                        farbe = Color32::from_rgba_unmultiplied(f[0], f[1], f[2], f[3]);
+                                        naechste_grenze = (*fe).min(e);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if naechste_grenze > cursor {
+                            final_stuecke.push((cursor, naechste_grenze, farbe));
+                            cursor = naechste_grenze;
+                        } else {
+                            break; // Sicherheit gegen Endlosschleife
                         }
                     }
                 }
-                let hat_code = !code_farben.is_empty();
 
-                for (s, e, stil) in stuecke {
-                    let farbe;
-                    if stil == glossary::Stil::Glossar {
-                        farbe = GLOSSAR_FARBE;
-                    } else if let glossary::Stil::Token(tok) = stil {
-                        if tok != Tok::CodeBlock || !hat_code {
-                            farbe = tok_color(tok);
-                        } else {
-                            // Innerhalb eines Codeblocks: syntect-Farbe suchen.
-                            // (Der Abschnitt liegt ganz in einem Block oder teilt ihn.)
-                            let mut gefunden = None;
-                            for (_bs, _be, farben) in &code_farben {
-                                for (fs, fe, f) in farben {
-                                    // Überschneidung mit [s, e):
-                                    if *fe > s && *fs < e {
-                                        // Nimm die Farbe am Abschnitts-Anfang.
-                                        if *fs <= s && s < *fe {
-                                            gefunden = Some(*f);
-                                            break;
-                                        }
-                                    }
-                                }
-                                if gefunden.is_some() {
-                                    break;
-                                }
-                            }
-                            farbe = gefunden
-                                .map(|f| Color32::from_rgba_unmultiplied(f[0], f[1], f[2], f[3]))
-                                .unwrap_or_else(|| tok_color(Tok::CodeBlock));
-                        }
-                    } else {
-                        farbe = tok_color(Tok::Plain);
-                    }
+                for (s, e, farbe) in final_stuecke {
                     let fmt = egui::TextFormat::simple(
                         egui::FontId::monospace(schrift_groesse),
                         farbe,
@@ -944,12 +993,16 @@ impl App {
             // text zurückgeben, damit der Puffer konsistent bleibt (kein Op nötig)
         }
 
+        let anteil_vor_frame = self.sync_letzter;
         let sichtbar = scroll_out.inner_rect.height();
         if scroll_out.content_size.y > sichtbar && sichtbar > 0.0 {
             self.sync_scroll =
                 (scroll_out.state.offset.y / (scroll_out.content_size.y - sichtbar))
                     .clamp(0.0, 1.0);
         }
+        self.sync_geaendert =
+            anteil_vor_frame.map_or(true, |vor| (vor - self.sync_scroll).abs() > 0.001);
+        self.sync_letzter = Some(self.sync_scroll);
     }
 
     /// Sammelt Notizpfad + erste Zeilen für das Hover-Popup (kein UI-Borrow).
@@ -1046,11 +1099,20 @@ impl App {
             })
             .collect();
 
-        // Sync-Scroll: Vorschau übernimmt den Anteil des Editors. Wir merken
-        // uns die letzte Richtung, um Schleifen zu vermeiden (Editor dominiert).
+        // Sync-Scroll: Vorschau übernimmt den Anteil des Editors, solange aktiv
+        // und der Editor seit letztem Frame seinen Anteil geändert hat.
         let anteil = self.sync_scroll;
-        let scroll_out = egui::ScrollArea::vertical()
-            .id_salt("preview_scroll")
+        let mut ziel_offset = None;
+        if self.einst.werte.sync_scroll_aktiv && self.sync_geaendert {
+            if let Some((content, sichtbar)) = self.vorschau_mass.last {
+                ziel_offset = Some(anteil * (content - sichtbar).max(0.0));
+            }
+        }
+        let mut preview_builder = egui::ScrollArea::vertical().id_salt("preview_scroll");
+        if let Some(ziel) = ziel_offset {
+            preview_builder = preview_builder.vertical_scroll_offset(ziel);
+        }
+        let scroll_out = preview_builder
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 if let Some(raw) = fm_raw {
@@ -1120,22 +1182,11 @@ impl App {
                 }
             });
 
-        // Vorschau-Scroll auf Editor-Anteil setzen (nur wenn der Nutzer
-        // gerade NICHT in der Vorschau scrollt):
-        let vorschau_interagiert = ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary))
-            && ui.rect_contains_pointer(scroll_out.inner_rect);
-        let sichtbar = scroll_out.inner_rect.height();
-        if !vorschau_interagiert && sichtbar > 0.0 && scroll_out.content_size.y > sichtbar {
-            let ziel_offset =
-                anteil * (scroll_out.content_size.y - sichtbar);
-            if (scroll_out.state.offset.y - ziel_offset).abs() > 2.0 {
-                egui::scroll_area::State::load(ui.ctx(), egui::Id::new("preview_scroll"))
-                    .map(|mut st| {
-                        st.offset.y = ziel_offset;
-                        st.store(ui.ctx(), egui::Id::new("preview_scroll"));
-                    });
-            }
-        }
+        // Maße für den nächsten Sync-Merker:
+        self.vorschau_mass.last = Some((
+            scroll_out.content_size.y,
+            scroll_out.inner_rect.height(),
+        ));
     }
 }
 
@@ -1573,6 +1624,15 @@ impl App {
             Aktion::NotizSchliessen => self.active = None,
             Aktion::NaechsteNotiz => self.naechste_notiz(1),
             Aktion::VorherigeNotiz => self.naechste_notiz(-1),
+            Aktion::SyncScrollUmschalten => {
+                self.einst.werte.sync_scroll_aktiv = !self.einst.werte.sync_scroll_aktiv;
+                self.einst.markiere_dirty();
+                self.status = if self.einst.werte.sync_scroll_aktiv {
+                    "Synchronisiertes Scrollen aktiviert".into()
+                } else {
+                    "Synchronisiertes Scrollen deaktiviert".into()
+                };
+            }
             Aktion::GlossarUmschalten => {
                 self.einst.werte.glossar_aktiv = !self.einst.werte.glossar_aktiv;
                 self.einst.markiere_dirty();

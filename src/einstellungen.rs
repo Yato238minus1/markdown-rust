@@ -24,6 +24,7 @@ pub enum Aktion {
     NaechsteNotiz,
     VorherigeNotiz,
     GlossarUmschalten,
+    SyncScrollUmschalten,
 }
 
 impl Aktion {
@@ -40,6 +41,7 @@ impl Aktion {
         (Aktion::NaechsteNotiz, "Nächste Notiz"),
         (Aktion::VorherigeNotiz, "Vorherige Notiz"),
         (Aktion::GlossarUmschalten, "Glossar umschalten"),
+        (Aktion::SyncScrollUmschalten, "Sync-Scroll umschalten"),
     ];
 
     pub fn name(self) -> &'static str {
@@ -65,6 +67,7 @@ impl Aktion {
             Aktion::NaechsteNotiz => "naechste_notiz",
             Aktion::VorherigeNotiz => "vorherige_notiz",
             Aktion::GlossarUmschalten => "glossar_umschalten",
+            Aktion::SyncScrollUmschalten => "sync_scroll_umschalten",
         }
     }
 
@@ -82,6 +85,7 @@ impl Aktion {
             "naechste_notiz" => Aktion::NaechsteNotiz,
             "vorherige_notiz" => Aktion::VorherigeNotiz,
             "glossar_umschalten" => Aktion::GlossarUmschalten,
+            "sync_scroll_umschalten" => Aktion::SyncScrollUmschalten,
             _ => return None,
         })
     }
@@ -175,6 +179,9 @@ pub struct Einstellungen {
     /// Mindestlänge eines Glossar-Begriffs (kürzere werden nie verlinkt).
     pub glossar_min_laenge: usize,
 
+    /// Synchronisiertes Scrollen zwischen Editor und Vorschau.
+    pub sync_scroll_aktiv: bool,
+
     // Editor
     pub editor_schriftgroesse: f32,
     pub editor_zeilennummern: bool,
@@ -198,6 +205,7 @@ impl Default for Einstellungen {
             glossar_vorschau_liste: true,
             glossar_min_laenge: 3,
 
+            sync_scroll_aktiv: true,
             editor_schriftgroesse: 14.0,
             editor_zeilennummern: false,
             editor_zeilenabstand: 1.0,
@@ -222,6 +230,7 @@ pub fn standard_keybinds() -> Vec<(String, String)> {
         (Aktion::NaechsteNotiz.schluessel().into(), Keybind::neu(true, false, false, "ArrowDown").serialisiere()),
         (Aktion::VorherigeNotiz.schluessel().into(), Keybind::neu(true, false, false, "ArrowUp").serialisiere()),
         (Aktion::GlossarUmschalten.schluessel().into(), Keybind::neu(true, true, false, "G").serialisiere()),
+        (Aktion::SyncScrollUmschalten.schluessel().into(), Keybind::neu(true, true, false, "Y").serialisiere()),
     ]
 }
 
@@ -536,5 +545,32 @@ mod keybind_default_tests {
             "leere keybinds müssen Standard-Belegung erhalten"
         );
         assert!(m.werte.bind_fuer(Aktion::Speichern).is_some());
+    }
+}
+
+#[cfg(test)]
+mod sync_scroll_tests {
+    use super::*;
+
+    #[test]
+    fn aktion_synchronisiert_umgeschaltet_serialisiierbar() {
+        // Schlüssel-Round-Trip
+        let a = Aktion::SyncScrollUmschalten;
+        let s = a.schluessel();
+        assert_eq!(s, "sync_scroll_umschalten");
+        assert_eq!(Aktion::aus_schluessel(&s), Some(a));
+
+        // Standard-Keybind existiert und ist Ctrl+Shift+Y
+        let kb = standard_keybinds()
+            .into_iter()
+            .find(|(name, _)| name == "sync_scroll_umschalten")
+            .expect("Sync-Scroll-Default-Keybind vorhanden");
+        let bind = &kb.1;
+        assert!(bind.contains("Ctrl") && bind.contains("Shift") && bind.contains("Y"));
+    }
+
+    #[test]
+    fn sync_scroll_aktiv_ist_default_true() {
+        assert!(Einstellungen::default().sync_scroll_aktiv);
     }
 }
