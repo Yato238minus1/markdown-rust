@@ -566,37 +566,21 @@ impl eframe::App for App {
 
         // ---- Strg+Hover-Popup über Editor-Links ----
         if let Some((ziel, pos)) = self.hover_link.clone() {
-            let Some(v) = &self.vault else { return };
-            let pfade: Vec<PathBuf> = v.notes().iter().map(|n| n.abs.clone()).collect();
-            let gefunden = markdown::resolve_wikilink(pfade.iter().map(|p| p.as_path()), &ziel);
+            let vorschau_zeilen: Option<(PathBuf, Vec<String>)> = self.hover_vorschau(&ziel);
             egui::Area::new(egui::Id::new("hover_popup"))
                 .order(egui::Order::Tooltip)
                 .fixed_pos(pos + egui::vec2(16.0, 20.0))
                 .show(&ctx, |ui| {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         ui.set_max_width(280.0);
-                        match gefunden {
-                            Some(p) => {
+                        match vorschau_zeilen.as_ref() {
+                            Some((_, zeilen)) => {
                                 ui.horizontal(|ui| {
                                     ui.weak("Notiz:");
                                     ui.label(ziel.clone());
                                 });
-                                // Vorschau der ersten Zeilen:
-                                let ziel_text = v
-                                    .buffer(&p)
-                                    .map(|b| b.text.clone())
-                                    .or_else(|| std::fs::read_to_string(&p).ok());
-                                if let Some(inhalt) = ziel_text {
-                                    let (_fm, body) = markdown::split_front_matter(&inhalt);
-                                    let zeilen: Vec<&str> =
-                                        body.lines().filter(|l| !l.trim().is_empty()).take(4).collect();
-                                    for z in zeilen {
-                                        let z = z.trim_start_matches('#').trim();
-                                        ui.small(z.to_string());
-                                    }
-                                    if inhalt.lines().count() > 6 {
-                                        ui.small("…");
-                                    }
+                                for z in zeilen {
+                                    ui.small(z.to_string());
                                 }
                             }
                             None => {
@@ -966,6 +950,25 @@ impl App {
                 (scroll_out.state.offset.y / (scroll_out.content_size.y - sichtbar))
                     .clamp(0.0, 1.0);
         }
+    }
+
+    /// Sammelt Notizpfad + erste Zeilen für das Hover-Popup (kein UI-Borrow).
+    fn hover_vorschau(&self, ziel: &str) -> Option<(PathBuf, Vec<String>)> {
+        let v = self.vault.as_ref()?;
+        let pfade: Vec<PathBuf> = v.notes().iter().map(|n| n.abs.clone()).collect();
+        let pfad = markdown::resolve_wikilink(pfade.iter().map(|p| p.as_path()), ziel)?;
+        let inhalt = v
+            .buffer(&pfad)
+            .map(|b| b.text.clone())
+            .or_else(|| std::fs::read_to_string(&pfad).ok())?;
+        let (_fm, body) = markdown::split_front_matter(&inhalt);
+        let zeilen: Vec<String> = body
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .take(4)
+            .map(|l| l.trim_start_matches('#').trim().to_string())
+            .collect();
+        Some((pfad, zeilen))
     }
 
     /// Ermittelt den Wikilink unter der Maus: Strg+Hover zeigt ein Popup,
