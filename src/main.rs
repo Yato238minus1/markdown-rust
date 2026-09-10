@@ -489,7 +489,7 @@ impl eframe::App for App {
             }
         }
 
-        egui::Panel::top("topbar").show_inside(ui, |ui| {
+        egui::Panel::top("topbar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui.button(txt.open_folder).clicked() {
                     self.open_folder_dialog_and_load();
@@ -519,7 +519,7 @@ impl eframe::App for App {
             });
         });
 
-        egui::Panel::bottom("statusbar").show_inside(ui, |ui| {
+        egui::Panel::bottom("statusbar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(&self.status);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -539,7 +539,7 @@ impl eframe::App for App {
         egui::Panel::left("sidebar")
             .default_size(240.0)
             .resizable(true)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Notes, txt.notes);
                     ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Search, txt.search);
@@ -551,7 +551,7 @@ impl eframe::App for App {
                 }
             });
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             if self.vault.is_none() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(80.0);
@@ -583,7 +583,7 @@ impl eframe::App for App {
                 egui::Panel::right("preview_panel")
                     .resizable(true)
                     .default_size(420.0)
-                    .show_inside(ui, |ui| {
+                    .show(ui, |ui| {
                         self.ui_preview(ui);
                     });
                 // remaining area:
@@ -1065,7 +1065,7 @@ impl App {
         let galley_pos = te_out.galley_pos;
         let rel = egui::vec2(hover_pos.x - galley_pos.x, hover_pos.y - galley_pos.y);
         let ccursor = te_out.galley.cursor_from_pos(rel);
-        let byte_pos = char_to_byte(text, ccursor.index);
+        let byte_pos = char_to_byte(text, ccursor.index.into());
 
         let link = rusty_notes::editor_links::wikilink_at(text, byte_pos);
 
