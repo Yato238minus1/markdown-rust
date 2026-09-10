@@ -293,3 +293,147 @@ mod tests {
         assert_eq!(gl.eintraege()[0].pfad, PathBuf::from("/v/a.md"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Verschneidung mit Editor-Highlighting
+// ---------------------------------------------------------------------------
+
+/// Stil eines Anzeigebereichs: normales Token oder Glossar-Begriff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stil {
+    Token(crate::editor::Tok),
+    Glossar,
+}
+
+/// Verschneidet kontiguous Highlight-Spans mit Glossar-Treffern: Treffer-
+/// Bereiche bekommen `Stil::Glossar`, der Rest behält sein Token. Beide
+/// Eingaben müssen aufsteigend sortiert und nichtüberlappend sein.
+pub fn verschneide(
+    spans: &[crate::editor::Span],
+    treffer: &[GlossarTreffer],
+    text_len: usize,
+) -> Vec<(usize, usize, Stil)> {
+    let mut out: Vec<(usize, usize, Stil)> = Vec::new();
+    let mut cursor = 0usize; // aktuelle Position im Dokument
+    let mut si = 0usize; // Index in spans
+    let mut ti = 0usize; // Index in treffer
+
+    while cursor < text_len {
+        // Nächster Ereignis-Punkt: Ende des aktuellen Spans oder des Treffers.
+        let span_rest = si < spans.len() && spans[si].end > cursor;
+        let treffer_rest = ti < treffer.len() && treffer[ti].end > cursor;
+
+        if !span_rest && !treffer_rest {
+            // Rest als Plain auffüllen (sollte bei voller Abdeckung nicht passieren)
+            out.push((cursor, text_len, Stil::Token(crate::editor::Tok::Plain)));
+            break;
+        }
+
+        // Grenzen: Ende des Spans, Anfang UND Ende des Treffers.
+        let mut grenzen: Vec<usize> = Vec::new();
+        if span_rest {
+            grenzen.push(spans[si].end);
+        }
+        if treffer_rest {
+            grenzen.push(treffer[ti].end);
+            if treffer[ti].start > cursor {
+                grenzen.push(treffer[ti].start);
+            }
+        }
+        let next_end = grenzen.iter().copied().min().unwrap_or(text_len);
+
+        let in_treffer = treffer_rest && treffer[ti].start <= cursor;
+        let stil = if in_treffer {
+            Stil::Glossar
+        } else {
+            Stil::Token(spans[si].tok)
+        };
+        out.push((cursor, next_end, stil));
+
+        if span_rest && spans[si].end == next_end {
+            si += 1;
+        }
+        if treffer_rest && treffer[ti].end == next_end {
+            ti += 1;
+        }
+        cursor = next_end;
+    }
+    out
+}
+
+#[cfg(test)]
+mod verschneide_tests {
+    use super::*;
+    use crate::editor::{self, Span, Tok};
+
+    fn span(s: usize, e: usize, t: Tok) -> editor::Span {
+        editor::Span { start: s, end: e, tok: t }
+    }
+
+    #[test]
+    fn treffer_in_einem_span_teilen_diesen() {
+        let spans = vec![span(0, 10, Tok::Plain)];
+        let treffer = vec![GlossarTreffer { start: 3, end: 7, index: 0 }];
+        let out = verschneide(&spans, &treffer, 10);
+        assert_eq!(
+            out,
+            vec![
+                (0, 3, Stil::Token(Tok::Plain)),
+                (3, 7, Stil::Glossar),
+                (7, 10, Stil::Token(Tok::Plain)),
+            ]
+        );
+    }
+
+    #[test]
+    fn treffer_ueber_mehrere_spans() {
+        let spans = vec![
+            span(0, 5, Tok::ListMarker),
+            span(5, 12, Tok::Plain),
+        ];
+        let treffer = vec![GlossarTreffer { start: 3, end: 8, index: 0 }];
+        let out = verschneide(&spans, &treffer, 12);
+        assert_eq!(
+            out,
+            vec![
+                (0, 3, Stil::Token(Tok::ListMarker)),
+                (3, 5, Stil::Glossar),
+                (5, 8, Stil::Glossar),
+                (8, 12, Stil::Token(Tok::Plain)),
+            ]
+        );
+    }
+
+    #[test]
+    fn ohne_treffer_bleibt_alles_gleich() {
+        let spans = vec![span(0, 4, Tok::Heading), span(4, 9, Tok::Plain)];
+        let out = verschneide(&spans, &[], 9);
+        assert_eq!(
+            out,
+            vec![
+                (0, 4, Stil::Token(Tok::Heading)),
+                (4, 9, Stil::Token(Tok::Plain)),
+            ]
+        );
+    }
+
+    #[test]
+    fn mehrere_treffer_in_einem_span() {
+        let spans = vec![span(0, 12, Tok::Plain)];
+        let treffer = vec![
+            GlossarTreffer { start: 1, end: 4, index: 0 },
+            GlossarTreffer { start: 7, end: 10, index: 1 },
+        ];
+        let out = verschneide(&spans, &treffer, 12);
+        assert_eq!(
+            out,
+            vec![
+                (0, 1, Stil::Token(Tok::Plain)),
+                (1, 4, Stil::Glossar),
+                (4, 7, Stil::Token(Tok::Plain)),
+                (7, 10, Stil::Glossar),
+                (10, 12, Stil::Token(Tok::Plain)),
+            ]
+        );
+    }
+}

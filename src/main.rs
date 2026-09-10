@@ -1,6 +1,10 @@
 //! rusty-notes: a fast, keyboard-driven Markdown note editor.
 
-use rusty_notes::{editor, glossary, markdown, search, vault};
+use rusty_notes::{
+    einstellungen::{EinstellungsManager, Einstellungen},
+    glossary::{self, Glossar},
+    i18n as t, markdown, search, vault,
+};
 
 use std::path::PathBuf;
 
@@ -8,40 +12,11 @@ use eframe::egui;
 use egui::{Color32, Key};
 use egui_commonmark::CommonMarkCache;
 
-use crate::editor::{highlight, Tok};
+use rusty_notes::editor::{highlight, Tok};
 
 // ---------------------------------------------------------------------------
-// Config persistence
+// Einstellungen (persistiert ueber EinstellungsManager in der Bibliothek)
 // ---------------------------------------------------------------------------
-
-#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
-struct Config {
-    last_vault: Option<String>,
-}
-
-impl Config {
-    fn path() -> Option<PathBuf> {
-        dirs::config_dir().map(|d| d.join("rusty-notes").join("config.json"))
-    }
-
-    fn load() -> Config {
-        Config::path()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
-    }
-
-    fn save(&self) {
-        if let Some(p) = Config::path() {
-            if let Some(parent) = p.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            if let Ok(json) = serde_json::to_string_pretty(self) {
-                let _ = std::fs::write(p, json);
-            }
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // App state
@@ -66,6 +41,10 @@ enum Overlay {
         message: String,
         action: ConfirmAction,
         arg: PathBuf,
+    },
+    Einstellungen {
+        /// Arbeitskopie; wird beim Schließen übernommen (Dirty nur bei Diff).
+        entwurf: Einstellungen,
     },
 }
 
@@ -95,52 +74,84 @@ struct App {
     cache: CommonMarkCache,
     pending_link: Option<PathBuf>,
     focus_editor_once: bool,
+    einst: EinstellungsManager,
+    glossar: Option<Glossar>,
 }
 
 impl Default for App {
     fn default() -> Self {
-        let cfg = Config::load();
+        let einst = EinstellungsManager::laden();
+        let last_vault = einst.werte.last_vault.clone();
+        let vorschau = einst.werte.vorschau_sichtbar;
         Self {
             vault: None,
             active: None,
-            preview_visible: true,
+            preview_visible: vorschau,
             sidebar_tab: SidebarTab::Notes,
             search_query: String::new(),
             search_results: Vec::new(),
             switcher_query: String::new(),
             switcher_selected: 0,
             overlay: Overlay::None,
-            status: "Open a folder to begin (Ctrl+O)".into(),
+            status: format!("{} (Strg+O)", t::OPEN_FOLDER),
             dirty_at: None,
             cache: CommonMarkCache::default(),
             pending_link: None,
             focus_editor_once: false,
+            einst,
+            glossar: None,
         }
-        // last_vault is applied in `new()` below
-        .with_last_vault(cfg.last_vault)
+        .with_last_vault(last_vault)
     }
 }
 
 impl App {
     fn with_last_vault(mut self, last: Option<String>) -> Self {
         if let Some(v) = last {
-            self.status = format!("Opening {} …", v);
+            self.status = t::status_opening(&v);
             match open_vault(&v) {
                 Ok(mut vault) => {
                     vault.scan().ok();
                     let first = vault.notes().first().map(|n| n.abs.clone());
                     self.vault = Some(vault);
+                    self.glossar_erneuern();
                     if let Some(f) = first {
                         self.open_note(f);
                     }
-                    self.status = format!("Vault: {}", v);
+                    self.status = t::status_vault(&v);
                 }
                 Err(e) => {
-                    self.status = format!("Could not reopen {}: {}", v, e);
+                    self.status = t::status_reopen_failed(&v, &e.to_string());
                 }
             }
         }
         self
+    }
+
+    /// Glossar aus allen Notiz-Stems neu aufbauen (nur bei Vault-Änderung).
+    fn glossar_erneuern(&mut self) {
+        if !self.einst.werte.glossar_aktiv {
+            self.glossar = None;
+            return;
+        }
+        if let Some(v) = self.vault.as_ref() {
+            let eintraege: Vec<glossary::GlossarEintrag> = v
+                .notes()
+                .iter()
+                .map(|n| glossary::GlossarEintrag {
+                    begriff: std::path::Path::new(&n.rel)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    pfad: n.abs.clone(),
+                })
+                .collect();
+            self.glossar = Some(Glossar::neu(
+                eintraege,
+                self.einst.werte.glossar_case_insensitive,
+            ));
+        }
     }
 
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -161,14 +172,17 @@ impl App {
                 let first = v.notes().first().map(|n| n.abs.clone());
                 self.active = None;
                 self.vault = Some(v);
+                self.glossar_erneuern();
                 if let Some(f) = first {
                     self.open_note(f);
                 }
-                self.status = format!("Vault: {}", dir.display());
-                Config { last_vault: Some(dir.to_string_lossy().into_owned()) }.save();
+                self.status = t::status_vault(&dir.display().to_string());
+                self.einst
+                    .setze_last_vault(Some(dir.to_string_lossy().into_owned()));
             }
             Err(e) => {
-                self.status = format!("Failed to open {}: {}", dir.display(), e);
+                self.status =
+                    t::status_open_failed_path(&dir.display().to_string(), &e.to_string());
             }
         }
     }
@@ -179,7 +193,7 @@ impl App {
                 self.active = Some(abs);
                 self.focus_editor_once = true;
             } else {
-                self.status = "Failed to open note".into();
+                self.status = t::status_open_failed();
             }
         }
     }
@@ -187,15 +201,15 @@ impl App {
     fn save_active(&mut self) {
         if let (Some(v), Some(active)) = (self.vault.as_mut(), &self.active) {
             match v.save(active) {
-                Ok(()) => self.status = "Saved".into(),
-                Err(e) => self.status = format!("Save failed: {}", e),
+                Ok(()) => self.status = t::status_saved(),
+                Err(e) => self.status = t::status_save_failed(&e.to_string()),
             }
         }
     }
 
     fn create_note_flow(&mut self) {
         self.overlay = Overlay::Prompt {
-            title: "New note name (folders allowed):".into(),
+            title: t::NEW_NOTE_PROMPT.into(),
             value: String::new(),
             action: PromptAction::NewNote,
         };
@@ -208,7 +222,7 @@ impl App {
             .unwrap_or("")
             .to_string();
         self.overlay = Overlay::Prompt {
-            title: "Rename to:".into(),
+            title: t::RENAME_PROMPT.into(),
             value: default_name,
             action: PromptAction::Rename(path),
         };
@@ -231,9 +245,10 @@ impl App {
                         Ok(path) => {
                             self.active = Some(path);
                             self.focus_editor_once = true;
-                            self.status = format!("Created {}", rel);
+                            self.glossar_erneuern();
+                            self.status = t::status_created(&rel);
                         }
-                        Err(e) => self.status = format!("Create failed: {}", e),
+                        Err(e) => self.status = t::status_create_failed(&e.to_string()),
                     }
                 }
             }
@@ -256,9 +271,10 @@ impl App {
                             if self.active.as_deref() == Some(old_path.as_path()) {
                                 self.active = Some(new_abs.clone());
                             }
-                            self.status = format!("Renamed to {}", new_rel);
+                            self.glossar_erneuern();
+                            self.status = t::status_renamed(&new_rel);
                         }
-                        Err(e) => self.status = format!("Rename failed: {}", e),
+                        Err(e) => self.status = t::status_rename_failed(&e.to_string()),
                     }
                 }
             }
@@ -274,9 +290,10 @@ impl App {
                             if self.active.as_deref() == Some(arg) {
                                 self.active = None;
                             }
-                            self.status = "Deleted note".into();
+                            self.glossar_erneuern();
+                            self.status = t::status_deleted();
                         }
-                        Err(e) => self.status = format!("Delete failed: {}", e),
+                        Err(e) => self.status = t::status_delete_failed(&e.to_string()),
                     }
                 }
             }
@@ -285,7 +302,7 @@ impl App {
 
     fn autosave_tick(&mut self) {
         if let Some(t) = self.dirty_at {
-            if t.elapsed() >= std::time::Duration::from_millis(AUTOSAVE_MS as u64) {
+            if t.elapsed() >= std::time::Duration::from_millis(self.einst.werte.autosave_ms) {
                 self.dirty_at = None;
                 self.save_active();
             }
@@ -302,25 +319,25 @@ impl App {
         if q.is_empty() {
             return;
         }
-        if let Some(v) = self.vault.as_ref() {
-            let pairs: Vec<(String, String)> = v
+        if let Some(v) = self.vault.as_mut() {
+            let pfade: Vec<(PathBuf, String)> = v
                 .notes()
                 .iter()
-                .filter_map(|n| {
-                    let content = v
-                        .buffer(&n.abs)
-                        .map(|b| b.text.clone())
-                        .or_else(|| std::fs::read_to_string(&n.abs).ok())?;
-                    Some((n.rel.clone(), content))
-                })
+                .map(|n| (n.abs.clone(), n.rel.clone()))
                 .collect();
+            let mut pairs: Vec<(String, String)> = Vec::with_capacity(pfade.len());
+            for (abs, rel) in &pfade {
+                if let Ok(content) = v.content_for(abs) {
+                    pairs.push((rel.clone(), content));
+                }
+            }
             self.search_results = search::search_notes(&pairs, &q);
         }
     }
 
 }
 
-const AUTOSAVE_MS: u64 = 800;
+const GLOSSAR_FARBE: Color32 = Color32::from_rgb(126, 231, 135); // sattes Grün, deutlich von Link-Blau unterscheiden
 
 fn tok_color(tok: Tok) -> Color32 {
     match tok {
@@ -399,6 +416,7 @@ impl eframe::App for App {
                 Shortcut::FocusSearch => {
                     self.sidebar_tab = SidebarTab::Search;
                 }
+                Shortcut::Einstellungen => self.einstellungen_oeffnen(),
             }
         }
 
@@ -413,25 +431,29 @@ impl eframe::App for App {
 
         egui::Panel::top("topbar").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("Open Folder").clicked() {
+                if ui.button(t::OPEN_FOLDER).clicked() {
                     self.open_folder_dialog_and_load();
                 }
-                if ui.button("New Note").clicked() {
+                if ui.button(t::NEW_NOTE).clicked() {
                     self.create_note_flow();
                 }
-                if ui.button("Search").clicked() {
+                if ui.button(t::SEARCH).clicked() {
                     self.sidebar_tab = SidebarTab::Search;
                 }
                 if ui
-                    .selectable_label(self.preview_visible, "Preview")
+                    .selectable_label(self.preview_visible, t::PREVIEW)
                     .clicked()
                 {
                     self.preview_visible = !self.preview_visible;
+                    self.einst.werte.vorschau_sichtbar = self.preview_visible;
+                    self.einst.markiere_dirty();
+                }
+                if ui.button(t::SETTINGS).clicked() {
+                    self.einstellungen_oeffnen();
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.weak(format!(
-                        "{} notes",
-                        self.vault.as_ref().map(|v| v.notes().len()).unwrap_or(0)
+                    ui.weak(t::status_notes_count(
+                        self.vault.as_ref().map(|v| v.notes().len()).unwrap_or(0),
                     ));
                 });
             });
@@ -444,9 +466,9 @@ impl eframe::App for App {
                     if let (Some(v), Some(a)) = (&self.vault, &self.active) {
                         if let Some(b) = v.buffer(a) {
                             if b.dirty {
-                                ui.colored_label(Color32::YELLOW, "● unsaved");
+                                ui.colored_label(Color32::YELLOW, t::UNSAVED);
                             } else {
-                                ui.weak("saved");
+                                ui.weak(t::SAVED);
                             }
                         }
                     }
@@ -459,16 +481,8 @@ impl eframe::App for App {
             .resizable(true)
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(
-                        &mut self.sidebar_tab,
-                        SidebarTab::Notes,
-                        "Notes",
-                    );
-                    ui.selectable_value(
-                        &mut self.sidebar_tab,
-                        SidebarTab::Search,
-                        "Search",
-                    );
+                    ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Notes, t::NOTES);
+                    ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Search, t::SEARCH);
                 });
                 ui.separator();
                 match self.sidebar_tab {
@@ -482,8 +496,8 @@ impl eframe::App for App {
                 ui.vertical_centered(|ui| {
                     ui.add_space(80.0);
                     ui.heading("rusty-notes");
-                    ui.weak("A fast Markdown editor");
-                    if ui.button("Open folder…").clicked() {
+                    ui.weak(t::A_FAST_MARKDOWN_EDITOR);
+                    if ui.button(t::OPEN_FOLDER_DOTS).clicked() {
                         self.open_folder_dialog_and_load();
                     }
                 });
@@ -493,7 +507,7 @@ impl eframe::App for App {
             if !has_active {
                 ui.vertical_centered(|ui| {
                     ui.add_space(60.0);
-                    ui.weak("Select or create a note (Ctrl+N)");
+                    ui.weak(t::SELECT_OR_CREATE);
                 });
                 return;
             }
@@ -519,6 +533,11 @@ impl eframe::App for App {
 
         self.draw_overlay(&ctx);
 
+        // Einstellungen nur bei tatsächlichen Änderungen wegschreiben.
+        if self.einst.speichern_wenn_noetig() {
+            // gespeichert — nichts weiter zu tun
+        }
+
         // Keep repainting while an autosave is pending so it fires promptly.
         if self.dirty_at.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -534,6 +553,7 @@ enum Shortcut {
     NewNote,
     TogglePreview,
     FocusSearch,
+    Einstellungen,
 }
 
 fn check_shortcuts(ctx: &egui::Context, overlay: &Overlay) -> Option<Shortcut> {
@@ -557,6 +577,8 @@ fn check_shortcuts(ctx: &egui::Context, overlay: &Overlay) -> Option<Shortcut> {
             out = Some(Shortcut::TogglePreview);
         } else if mods.ctrl && mods.shift && i.key_pressed(Key::F) {
             out = Some(Shortcut::FocusSearch);
+        } else if mods.ctrl && mods.shift && i.key_pressed(Key::S) {
+            out = Some(Shortcut::Einstellungen);
         }
     });
     out
@@ -569,7 +591,7 @@ fn check_shortcuts(ctx: &egui::Context, overlay: &Overlay) -> Option<Shortcut> {
 impl App {
     fn ui_notes_list(&mut self, ui: &mut egui::Ui) {
         let Some(v) = self.vault.as_ref() else {
-            ui.weak("No vault open");
+            ui.weak(t::NO_VAULT);
             return;
         };
 
@@ -587,11 +609,11 @@ impl App {
                     to_open = Some(n.abs.clone());
                 }
                 resp.context_menu(|ui| {
-                    if ui.button("Rename").clicked() {
+                    if ui.button(t::RENAME).clicked() {
                         to_rename = Some(n.abs.clone());
                         ui.close();
                     }
-                    if ui.button("Delete").clicked() {
+                    if ui.button(t::DELETE).clicked() {
                         to_delete = Some(n.abs.clone());
                         ui.close();
                     }
@@ -607,7 +629,7 @@ impl App {
         }
         if let Some(p) = to_delete {
             self.overlay = Overlay::Confirm {
-                message: "Delete this note? This cannot be undone.".into(),
+                message: t::CONFIRM_DELETE.into(),
                 action: ConfirmAction::Delete,
                 arg: p,
             };
@@ -619,7 +641,7 @@ impl App {
         let changed = ui
             .add(
                 egui::TextEdit::singleline(&mut self.search_query)
-                    .hint_text("Search all notes…")
+                    .hint_text(t::SEARCH_ALL_NOTES)
                     .desired_width(f32::INFINITY),
             )
             .changed();
@@ -646,7 +668,7 @@ impl App {
                 }
             }
             if self.search_results.is_empty() && !self.search_query.trim().is_empty() {
-                ui.weak("No matches");
+                ui.weak(t::NO_MATCHES);
             }
         });
     }
@@ -665,16 +687,30 @@ impl App {
             return;
         };
 
+        // Glossar-Treffer einmal pro Frame berechnen (Aho-Corasick, schnell).
+        let glossar_treffer: Vec<glossary::GlossarTreffer> = match (&self.glossar, &self.einst.werte) {
+            (Some(g), e) if e.glossar_aktiv && !g.ist_leer() => {
+                let mut treffer = g.finde(&text);
+                treffer.truncate(e.glossar_max_treffer);
+                treffer
+            }
+            _ => Vec::new(),
+        };
+
         let mut layouter =
-            |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+            move |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
                 let txt = buf.as_str();
+                let spans = highlight(txt);
+                let stuecke: Vec<(usize, usize, glossary::Stil)> =
+                    glossary::verschneide(&spans, &glossar_treffer, txt.len());
                 let mut job = egui::text::LayoutJob::default();
-                for s in highlight(txt) {
-                    let fmt = egui::TextFormat::simple(
-                        egui::FontId::monospace(14.0),
-                        tok_color(s.tok),
-                    );
-                    job.append(&txt[s.start..s.end], 0.0, fmt);
+                for (s, e, stil) in stuecke {
+                    let farbe = match stil {
+                        glossary::Stil::Token(tok) => tok_color(tok),
+                        glossary::Stil::Glossar => GLOSSAR_FARBE,
+                    };
+                    let fmt = egui::TextFormat::simple(egui::FontId::monospace(14.0), farbe);
+                    job.append(&txt[s..e], 0.0, fmt);
                 }
                 job.wrap.max_width = wrap_width;
                 ui.fonts_mut(|f| f.layout_job(job))
@@ -719,17 +755,50 @@ impl App {
                 if let Some(raw) = fm_raw {
                     let fm = markdown::parse_front_matter(raw);
                     ui.horizontal_wrapped(|ui| {
-                        ui.weak("front matter:");
-                        if let Some(t) = fm.title {
-                            ui.label(format!("title: {}", t));
+                        ui.weak(t::FRONT_MATTER);
+                        if let Some(titel) = fm.title {
+                            ui.label(format!("{} {}", t::TITLE_LABEL, titel));
                         }
                         if !fm.tags.is_empty() {
-                            ui.label(format!("tags: {}", fm.tags.join(", ")));
+                            ui.label(format!("{} {}", t::TAGS_LABEL, fm.tags.join(", ")));
                         }
                     });
                     ui.separator();
                 }
                 egui_commonmark::CommonMarkViewer::new().show(ui, &mut self.cache, body);
+
+                // Klickbare Glossar-Verweise (virtuelle Links dieser Notiz):
+                if let Some(g) = &self.glossar {
+                    if self.einst.werte.glossar_aktiv && !g.ist_leer() {
+                        let mut treffer = g.finde(body);
+                        treffer.truncate(self.einst.werte.glossar_max_treffer);
+                        if !treffer.is_empty() {
+                            ui.add_space(6.0);
+                            ui.separator();
+                            ui.weak("Glossar:");
+                            ui.horizontal_wrapped(|ui| {
+                                // Duplikate nach Eintrags-Index zusammenfassen
+                                let mut gesehen: Vec<usize> = Vec::new();
+                                for tr in &treffer {
+                                    if !gesehen.contains(&tr.index) {
+                                        gesehen.push(tr.index);
+                                    }
+                                }
+                                gesehen.sort_unstable();
+                                let eintraege = g.eintraege();
+                                for idx in gesehen {
+                                    let e = &eintraege[idx];
+                                    if ui
+                                        .link(egui::RichText::new(&e.begriff).underline())
+                                        .clicked()
+                                    {
+                                        self.pending_link = Some(e.pfad.clone());
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
             });
     }
 }
@@ -745,7 +814,7 @@ impl App {
             Overlay::Switcher => {
                 let mut keep_open = true;
                 let mut done = false;
-                egui::Window::new("Quick Switcher")
+                egui::Window::new(t::QUICK_SWITCHER)
                     .anchor(egui::Align2::CENTER_TOP, [0.0, 60.0])
                     .resizable(false)
                     .collapsible(false)
@@ -753,7 +822,7 @@ impl App {
                         ui.set_min_width(420.0);
                         let resp = ui.add(
                             egui::TextEdit::singleline(&mut self.switcher_query)
-                                .hint_text("Type to filter notes…")
+                                .hint_text(t::TYPE_TO_FILTER)
                                 .desired_width(f32::INFINITY),
                         );
                         resp.request_focus();
@@ -808,7 +877,7 @@ impl App {
                                     }
                                 }
                                 if ranked.is_empty() {
-                                    ui.weak("No matching notes");
+                                    ui.weak(t::NO_MATCHING_NOTES);
                                 }
                             });
 
@@ -825,7 +894,7 @@ impl App {
             Overlay::CommandPalette => {
                 let mut keep_open = true;
                 let mut executed: Option<&'static str> = None;
-                egui::Window::new("Command Palette")
+                egui::Window::new(t::COMMAND_PALETTE)
                     .anchor(egui::Align2::CENTER_TOP, [0.0, 60.0])
                     .resizable(false)
                     .collapsible(false)
@@ -833,17 +902,18 @@ impl App {
                         ui.set_min_width(360.0);
                         let resp = ui.add(
                             egui::TextEdit::singleline(&mut self.switcher_query)
-                                .hint_text("Type a command…")
+                                .hint_text(t::TYPE_A_COMMAND)
                                 .desired_width(f32::INFINITY),
                         );
                         resp.request_focus();
 
                         let commands: &[(&str, &'static str)] = &[
-                            ("Toggle live preview", "toggle_preview"),
-                            ("New note", "new_note"),
-                            ("Save now", "save"),
-                            ("Open folder…", "open_folder"),
-                            ("Focus search", "focus_search"),
+                            (t::CMD_TOGGLE_PREVIEW, "toggle_preview"),
+                            (t::CMD_NEW_NOTE, "new_note"),
+                            (t::CMD_SAVE, "save"),
+                            (t::CMD_OPEN_FOLDER, "open_folder"),
+                            (t::CMD_FOCUS_SEARCH, "focus_search"),
+                            (t::CMD_SETTINGS, "open_settings"),
                         ];
                         let ranked =
                             search::quick_switcher(commands.iter().map(|(n, _)| *n), &self.switcher_query);
@@ -899,10 +969,10 @@ impl App {
                         });
                         ui.add_space(6.0);
                         ui.horizontal(|ui| {
-                            if ui.button("OK").clicked() || enter {
+                            if ui.button(t::OK).clicked() || enter {
                                 submitted = true;
                             }
-                            if ui.button("Cancel").clicked() || esc {
+                            if ui.button(t::CANCEL).clicked() || esc {
                                 keep_open = false;
                             }
                         });
@@ -916,10 +986,77 @@ impl App {
                     Overlay::None
                 };
             }
+            Overlay::Einstellungen { mut entwurf } => {
+                let mut keep_open = true;
+                let mut schliessen = false;
+                egui::Window::new(t::SETTINGS_TITLE)
+                    .anchor(egui::Align2::CENTER_TOP, [0.0, 60.0])
+                    .resizable(false)
+                    .collapsible(false)
+                    .show(&ctx, |ui| {
+                        ui.set_min_width(420.0);
+                        ui.add_space(4.0);
+
+                        ui.checkbox(&mut entwurf.vorschau_sichtbar, t::SET_PREVIEW);
+                        ui.checkbox(&mut entwurf.glossar_aktiv, t::SET_GLOSSAR);
+                        ui.add_enabled_ui(entwurf.glossar_aktiv, |ui| {
+                            ui.checkbox(&mut entwurf.glossar_case_insensitive, t::SET_GLOSSAR_CI);
+                            ui.horizontal(|ui| {
+                                ui.label(t::SET_GLOSSAR_MAX);
+                                ui.add(
+                                    egui::DragValue::new(&mut entwurf.glossar_max_treffer)
+                                        .speed(10)
+                                        .range(10..=10_000),
+                                );
+                            });
+                        });
+
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label(t::SET_AUTOSAVE);
+                            let antwort = ui.add(
+                                egui::DragValue::new(&mut entwurf.autosave_ms)
+                                    .speed(100)
+                                    .range(0..=10_000)
+                                    .suffix(" ms"),
+                            );
+                            let _ = antwort;
+                        });
+
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            if ui.button(t::SET_CLOSE).clicked() {
+                                schliessen = true;
+                            }
+                        });
+                    });
+
+                if schliessen {
+                    // Dirty nur bei tatsächlicher Änderung:
+                    if entwurf != self.einst.werte {
+                        let glossar_neu = entwurf.glossar_aktiv
+                            != self.einst.werte.glossar_aktiv
+                            || entwurf.glossar_case_insensitive
+                                != self.einst.werte.glossar_case_insensitive;
+                        self.einst.werte = entwurf.clone();
+                        self.einst.markiere_dirty();
+                        if glossar_neu {
+                            self.glossar_erneuern();
+                        }
+                    }
+                    keep_open = false;
+                }
+                self.overlay = if keep_open {
+                    Overlay::Einstellungen { entwurf }
+                } else {
+                    Overlay::None
+                };
+            }
             Overlay::Confirm { message, action, arg } => {
                 let mut keep_open = true;
                 let mut result: Option<bool> = None;
-                egui::Window::new("Confirm")
+                egui::Window::new(t::CONFIRM)
                     .anchor(egui::Align2::CENTER_TOP, [0.0, 60.0])
                     .resizable(false)
                     .collapsible(false)
@@ -927,10 +1064,10 @@ impl App {
                         ui.label(&message);
                         ui.add_space(6.0);
                         ui.horizontal(|ui| {
-                            if ui.button("Yes").clicked() {
+                            if ui.button(t::YES).clicked() {
                                 result = Some(true);
                             }
-                            if ui.button("No").clicked() {
+                            if ui.button(t::NO).clicked() {
                                 result = Some(false);
                             }
                         });
@@ -952,13 +1089,24 @@ impl App {
 
     fn run_command(&mut self, id: &str) {
         match id {
-            "toggle_preview" => self.preview_visible = !self.preview_visible,
+            "toggle_preview" => {
+                self.preview_visible = !self.preview_visible;
+                self.einst.werte.vorschau_sichtbar = self.preview_visible;
+                self.einst.markiere_dirty();
+            }
             "new_note" => self.create_note_flow(),
             "save" => self.save_active(),
             "open_folder" => self.open_folder_dialog_and_load(),
             "focus_search" => self.sidebar_tab = SidebarTab::Search,
+            "open_settings" => self.einstellungen_oeffnen(),
             _ => {}
         }
+    }
+
+    fn einstellungen_oeffnen(&mut self) {
+        self.overlay = Overlay::Einstellungen {
+            entwurf: self.einst.werte.clone(),
+        };
     }
 }
 
