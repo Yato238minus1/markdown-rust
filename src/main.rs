@@ -1,12 +1,14 @@
 //! rusty-notes: a fast, keyboard-driven Markdown note editor.
 
 use rusty_notes::{
+    code_hervorhebung::CodeHighlighter,
     einstellungen::{Aktion, EinstellungsManager, Einstellungen, Keybind},
     glossary::{self, Glossar},
     i18n as t, markdown, search, vault,
 };
 
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 use eframe::egui;
 use egui::{Color32, Key};
@@ -77,6 +79,10 @@ struct App {
     einst: EinstellungsManager,
     glossar: Option<Glossar>,
     keybind_aufzeichnen: Option<Aktion>,
+    /// Strg+Hover: (Zielnotiz, Bildschirmposition) für das Popup.
+    hover_link: Option<(String, egui::Pos2)>,
+    /// Sync-Scroll: letzter geteilter Scroll-Stand der Editor-/Vorschau-Ansicht.
+    sync_scroll: f32,
 }
 
 impl Default for App {
@@ -102,6 +108,8 @@ impl Default for App {
             einst,
             glossar: None,
             keybind_aufzeichnen: None,
+            hover_link: None,
+            sync_scroll: 0.0,
         }
         .with_last_vault(last_vault)
     }
@@ -363,6 +371,8 @@ impl App {
 
 const GLOSSAR_FARBE: Color32 = Color32::from_rgb(126, 231, 135); // sattes Grün, deutlich von Link-Blau unterscheiden
 
+static CODE_HIGHLIGHTER: LazyLock<CodeHighlighter> = LazyLock::new(CodeHighlighter::default);
+
 fn tok_color(tok: Tok) -> Color32 {
     match tok {
         Tok::Heading => Color32::from_rgb(133, 176, 255),
@@ -554,6 +564,71 @@ impl eframe::App for App {
 
         self.draw_overlay(&ctx);
 
+        // ---- Strg+Hover-Popup über Editor-Links ----
+        if let Some((ziel, pos)) = self.hover_link.clone() {
+            let Some(v) = &self.vault else { return };
+            let pfade: Vec<PathBuf> = v.notes().iter().map(|n| n.abs.clone()).collect();
+            let gefunden = markdown::resolve_wikilink(pfade.iter().map(|p| p.as_path()), &ziel);
+            egui::Area::new(egui::Id::new("hover_popup"))
+                .order(egui::Order::Tooltip)
+                .fixed_pos(pos + egui::vec2(16.0, 20.0))
+                .show(&ctx, |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.set_max_width(280.0);
+                        match gefunden {
+                            Some(p) => {
+                                ui.horizontal(|ui| {
+                                    ui.weak("Notiz:");
+                                    ui.label(ziel.clone());
+                                });
+                                // Vorschau der ersten Zeilen:
+                                let ziel_text = v
+                                    .buffer(&p)
+                                    .map(|b| b.text.clone())
+                                    .or_else(|| std::fs::read_to_string(&p).ok());
+                                if let Some(inhalt) = ziel_text {
+                                    let (_fm, body) = markdown::split_front_matter(&inhalt);
+                                    let zeilen: Vec<&str> =
+                                        body.lines().filter(|l| !l.trim().is_empty()).take(4).collect();
+                                    for z in zeilen {
+                                        let z = z.trim_start_matches('#').trim();
+                                        ui.small(z.to_string());
+                                    }
+                                    if inhalt.lines().count() > 6 {
+                                        ui.small("…");
+                                    }
+                                }
+                            }
+                            None => {
+                                ui.colored_label(Color32::ORANGE, format!("'{}' nicht gefunden", ziel));
+                                if ui.small_button("Neue Notiz erstellen").clicked() {
+                                    if let Some(v) = self.vault.as_mut() {
+                                        let rel = if ziel.ends_with(".md") {
+                                            ziel.clone()
+                                        } else {
+                                            format!("{}.md", ziel)
+                                        };
+                                        match v.create_note(&rel) {
+                                            Ok(pfad) => {
+                                                self.active = Some(pfad);
+                                                self.focus_editor_once = true;
+                                                self.glossar_erneuern();
+                                                self.status = t::status_created(&rel);
+                                            }
+                                            Err(e) => {
+                                                self.status = t::status_create_failed(&e.to_string())
+                                            }
+                                        }
+                                    }
+                                    self.hover_link = None;
+                                }
+                            }
+                        }
+                    });
+                });
+        }
+
+
         // Einstellungen nur bei tatsächlichen Änderungen wegschreiben.
         if self.einst.speichern_wenn_noetig() {
             // gespeichert — nichts weiter zu tun
@@ -597,6 +672,14 @@ fn check_shortcuts(
         }
         None
     })
+}
+
+/// Zeichen-Offset -> Byte-Offset (UTF-8-sicher, clampend).
+fn char_zu_byte(text: &str, char_index: usize) -> usize {
+    text.char_indices()
+        .nth(char_index)
+        .map(|(b, _)| b)
+        .unwrap_or(text.len())
 }
 
 /// Serialisierter Name eines egui-Keys.
@@ -740,7 +823,7 @@ impl App {
             .and_then(|v| v.buffer(&path))
             .map(|b| b.text.clone());
         let Some(mut text) = text_now else {
-            ui.weak("(file no longer exists)");
+            ui.weak(t::FILE_GONE);
             return;
         };
 
@@ -754,8 +837,7 @@ impl App {
                 let mut treffer: Vec<glossary::GlossarTreffer> = g
                     .finde(&text)
                     .into_iter()
-                    .filter(|tr| tr.end - tr.start >= min_laenge * 2 || {
-                        // min_laenge zählt Zeichen; Byte-Länge kann abweichen (UTF-8)
+                    .filter(|tr| {
                         let s = &text[tr.start..tr.end];
                         s.chars().count() >= min_laenge
                     })
@@ -766,6 +848,8 @@ impl App {
             _ => Vec::new(),
         };
 
+        let editor_id = egui::Id::new(("editor", path.clone()));
+
         let mut layouter =
             move |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
                 let txt = buf.as_str();
@@ -773,11 +857,62 @@ impl App {
                 let stuecke: Vec<(usize, usize, glossary::Stil)> =
                     glossary::verschneide(&spans, &glossar_treffer, txt.len());
                 let mut job = egui::text::LayoutJob::default();
+
+                // Für CodeBlock-Bereiche: syntect-Färbung pro Block vorbereiten.
+                // Cache: (Block-Start, Infostring, Code) -> FarbSpannen.
+                let mut code_farben: Vec<(usize, usize, Vec<(usize, usize, [u8; 4])>)> = Vec::new();
+                for s in spans.iter() {
+                    if s.tok == Tok::CodeBlock {
+                        // Block-Inhalt extrahieren: ```info\n...```
+                        let blocktxt = &txt[s.start..s.end];
+                        if let Some(zeile_ende) = blocktxt.find('\n') {
+                            let info = blocktxt[3..zeile_ende].trim();
+                            let inhalt_start = s.start + zeile_ende + 1;
+                            let inhalt = &txt[inhalt_start..s.end];
+                            let farben: Vec<(usize, usize, [u8; 4])> = CODE_HIGHLIGHTER
+                                .highlight(inhalt, info)
+                                .into_iter()
+                                .map(|f| (inhalt_start + f.start, inhalt_start + f.end, f.farbe))
+                                .collect();
+                            code_farben.push((s.start, s.end, farben));
+                        }
+                    }
+                }
+                let hat_code = !code_farben.is_empty();
+
                 for (s, e, stil) in stuecke {
-                    let farbe = match stil {
-                        glossary::Stil::Token(tok) => tok_color(tok),
-                        glossary::Stil::Glossar => GLOSSAR_FARBE,
-                    };
+                    let farbe;
+                    if stil == glossary::Stil::Glossar {
+                        farbe = GLOSSAR_FARBE;
+                    } else if let glossary::Stil::Token(tok) = stil {
+                        if tok != Tok::CodeBlock || !hat_code {
+                            farbe = tok_color(tok);
+                        } else {
+                            // Innerhalb eines Codeblocks: syntect-Farbe suchen.
+                            // (Der Abschnitt liegt ganz in einem Block oder teilt ihn.)
+                            let mut gefunden = None;
+                            for (_bs, _be, farben) in &code_farben {
+                                for (fs, fe, f) in farben {
+                                    // Überschneidung mit [s, e):
+                                    if *fe > s && *fs < e {
+                                        // Nimm die Farbe am Abschnitts-Anfang.
+                                        if *fs <= s && s < *fe {
+                                            gefunden = Some(*f);
+                                            break;
+                                        }
+                                    }
+                                }
+                                if gefunden.is_some() {
+                                    break;
+                                }
+                            }
+                            farbe = gefunden
+                                .map(|f| Color32::from_rgba_unmultiplied(f[0], f[1], f[2], f[3]))
+                                .unwrap_or_else(|| tok_color(Tok::CodeBlock));
+                        }
+                    } else {
+                        farbe = tok_color(Tok::Plain);
+                    }
                     let fmt = egui::TextFormat::simple(
                         egui::FontId::monospace(schrift_groesse),
                         farbe,
@@ -788,22 +923,98 @@ impl App {
                 ui.fonts_mut(|f| f.layout_job(job))
             };
 
+        let text_len = text.len();
         let editor = egui::TextEdit::multiline(&mut text)
             .font(egui::TextStyle::Monospace)
             .layouter(&mut layouter)
-            .desired_width(f32::INFINITY);
-        let editor_resp = ui.add(editor);
-        if self.focus_editor_once {
-            editor_resp.request_focus();
-            self.focus_editor_once = false;
-        }
-        let edited = editor_resp.changed();
+            .desired_width(f32::INFINITY)
+            .id(editor_id);
 
-        if edited {
+        // Sync-Scroll: Editor in ScrollArea; der Stand wird als Anteil 0..1
+        // gespeichert und von ui_preview auf die Vorschau übertragen.
+        let scroll_id = egui::Id::new(("editor_scroll", path.clone()));
+        let mut geaendert = false;
+        let scroll_out = egui::ScrollArea::vertical()
+            .id_salt(scroll_id)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let te_out = editor.show(ui);
+                let editor_resp = te_out.response.clone();
+                if self.focus_editor_once {
+                    editor_resp.request_focus();
+                    self.focus_editor_once = false;
+                }
+
+                // ---- Link-Interaktion: Klick + Strg+Hover ----
+                self.interagiere_editor_links(&te_out, text_len);
+
+                geaendert = editor_resp.changed();
+            });
+
+        if geaendert {
             if let Some(v) = self.vault.as_mut() {
                 let _ = v.set_text(&path, text);
             }
             self.mark_dirty_timer();
+        } else if !text.is_empty() {
+            // text zurückgeben, damit der Puffer konsistent bleibt (kein Op nötig)
+        }
+
+        let sichtbar = scroll_out.inner_rect.height();
+        if scroll_out.content_size.y > sichtbar && sichtbar > 0.0 {
+            self.sync_scroll =
+                (scroll_out.state.offset.y / (scroll_out.content_size.y - sichtbar))
+                    .clamp(0.0, 1.0);
+        }
+    }
+
+    /// Ermittelt den Wikilink unter der Maus: Strg+Hover zeigt ein Popup,
+    /// Klick öffnet die Zielnotiz.
+    fn interagiere_editor_links(
+        &mut self,
+        te_out: &egui::widgets::text_edit::TextEditOutput,
+        text_len: usize,
+    ) {
+        let _ = text_len;
+        let text = te_out.galley.text();
+        let response = &te_out.response;
+
+        let Some(hover_pos) = response.hover_pos() else {
+            self.hover_link = None;
+            return;
+        };
+
+        // Byte-Offset unter der Maus:
+        let galley_pos = te_out.galley_pos;
+        let rel = egui::vec2(hover_pos.x - galley_pos.x, hover_pos.y - galley_pos.y);
+        let ccursor = te_out.galley.cursor_from_pos(rel);
+        let byte_pos = char_zu_byte(text, ccursor.index);
+
+        let link = rusty_notes::editor_links::wikilink_an(text, byte_pos);
+
+        // Strg+Hover → Popup merken
+        let ctrl = response.ctx.input(|i| i.modifiers.ctrl);
+        if ctrl {
+            if let Some(l) = &link {
+                self.hover_link = Some((l.ziel.clone(), hover_pos));
+            } else {
+                self.hover_link = None;
+            }
+        } else {
+            self.hover_link = None;
+        }
+
+        // Strg+Klick oder Mittelklick öffnet den Link unter der Maus.
+        let clicked = response.clicked_by(egui::PointerButton::Secondary)
+            || (ctrl && response.clicked_by(egui::PointerButton::Primary));
+        if clicked {
+            if let Some(l) = link {
+                if let Some(pfad) = self.notiz_fuer_wikilink(&l.ziel) {
+                    self.pending_link = Some(pfad);
+                } else {
+                    self.status = format!("Ziel '{}' nicht gefunden", l.ziel);
+                }
+            }
         }
     }
 
@@ -832,8 +1043,12 @@ impl App {
             })
             .collect();
 
-        egui::ScrollArea::vertical()
+        // Sync-Scroll: Vorschau übernimmt den Anteil des Editors. Wir merken
+        // uns die letzte Richtung, um Schleifen zu vermeiden (Editor dominiert).
+        let anteil = self.sync_scroll;
+        let scroll_out = egui::ScrollArea::vertical()
             .id_salt("preview_scroll")
+            .auto_shrink([false, false])
             .show(ui, |ui| {
                 if let Some(raw) = fm_raw {
                     let fm = markdown::parse_front_matter(raw);
@@ -901,6 +1116,23 @@ impl App {
                     }
                 }
             });
+
+        // Vorschau-Scroll auf Editor-Anteil setzen (nur wenn der Nutzer
+        // gerade NICHT in der Vorschau scrollt):
+        let vorschau_interagiert = ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary))
+            && ui.rect_contains_pointer(scroll_out.inner_rect);
+        let sichtbar = scroll_out.inner_rect.height();
+        if !vorschau_interagiert && sichtbar > 0.0 && scroll_out.content_size.y > sichtbar {
+            let ziel_offset =
+                anteil * (scroll_out.content_size.y - sichtbar);
+            if (scroll_out.state.offset.y - ziel_offset).abs() > 2.0 {
+                egui::scroll_area::State::load(ui.ctx(), egui::Id::new("preview_scroll"))
+                    .map(|mut st| {
+                        st.offset.y = ziel_offset;
+                        st.store(ui.ctx(), egui::Id::new("preview_scroll"));
+                    });
+            }
+        }
     }
 }
 
