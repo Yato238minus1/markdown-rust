@@ -1,4 +1,5 @@
 pub mod markdown;
+pub mod search;
 pub mod vault;
 
 fn main() {
