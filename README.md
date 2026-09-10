@@ -1,8 +1,18 @@
 # rusty-notes
 
-A fast, keyboard-driven Markdown note editor for Linux, written in Rust.
-Inspired by Obsidian (vault + wikilinks), Zen Notes (minimal chrome), and
-Zettlr (writing focus).
+Ein schneller, tastaturgetriebener Markdown-Notiz-Editor in Rust.
+Inspiriert von Obsidian (Vault + Wikilinks), Zen Notes (minimale Oberfläche)
+und Zettlr (Schreibfokus).
+
+## Glossar (virtuelle Verlinkung)
+
+Angelehnt an das Obsidian-Plugin *Virtual Linker / Glossary*, aber neu
+gedacht: Ein **Aho-Corasick-Automat** findet alle Glossar-Begriffe in einem
+einzigen Durchlauf (O(Textlänge)), statt jeden Begriff einzeln zu suchen.
+Begriffe (die Notiz-Namen des Vaults) werden im Editor **grün** markiert und
+unter der Vorschau als klickbare Verweise aufgelistet — ohne den Text zu
+verändern. Code-Blöcke, Inline-Code und bestehende Links werden nie verlinkt;
+Groß-/Kleinschreibung ist optional (Einstellung).
 
 ![status](https://img.shields.io/badge/tests-27%20passing-brightgreen)
 
@@ -44,7 +54,8 @@ for the folder-picker dialog (present on virtually all desktop distros).
 | `Ctrl+N` | New note (folders allowed, e.g. `ideas/foo`) |
 | `Ctrl+S` | Save now (autosave also runs 0.8 s after typing) |
 | `Ctrl+E` | Toggle live preview |
-| `Ctrl+Shift+F` | Vault-wide text search |
+| `Ctrl+Shift+F` | Vault-weite Suche |
+| `Ctrl+Shift+S` | Einstellungen |
 
 ## Features
 
@@ -56,19 +67,37 @@ for the folder-picker dialog (present on virtually all desktop distros).
 - Create / rename / delete notes (right-click in sidebar), buffers follow renames
 - Debounced autosave with dirty indicator in the status bar
 
-## Architecture
+## Architektur
 
 ```
 src/
-├── main.rs     UI shell: panels, overlays, shortcuts, autosave, theme
-├── vault.rs    Folder scan + note buffers (open/save/create/rename/delete)
-├── markdown.rs Front-matter parsing + wikilink extraction/resolution
-├── search.rs   Full-text search + fuzzy quick-switcher scoring
-└── editor.rs   Byte<->line index + incremental Markdown highlighter
+├── main.rs           UI-Shell: Panels, Overlays, Shortcuts, Autosave, Theme
+├── lib.rs            Bibliothekskern (für Integrationstests)
+├── vault.rs          Ordner-Scan + Puffer + Inhalts-Cache (mtime-entwertet)
+├── markdown.rs       Front-Matter + Wikilink-Extraktion/-Auflösung
+├── search.rs         Volltextsuche + Fuzzy-Schnellwechsler
+├── editor.rs         Byte<->Zeile-Index + inkrementelles Highlighting
+├── glossary.rs       Aho-Corasick-Glossar + Span-Verschneidung
+├── einstellungen.rs  Persistente Einstellungen (Dirty-Tracking)
+└── i18n.rs           Deutsche UI-Texte
+tests/bug_tests.rs    Regressionstests für gefundene Bugs
 ```
 
-All logic modules are pure and unit-tested (27 tests); the UI layer is a thin
-shell over them. Tests: `cargo test`.
+Alle Logik-Module sind rein und unit-getestet (52 Tests); die UI ist eine
+dünne Schale darüber. `cargo test` läuft alles.
+
+## Windows-Build
+
+Der Code kompiliert für `x86_64-pc-windows-msvc` (geprüft per
+`cargo check --target x86_64-pc-windows-msvc`): Der Ordner-Dialog nutzt dort
+den nativen Win32-Dialog (rfd), unter Linux zenity.
+
+```sh
+rustup target add x86_64-pc-windows-msvc
+cargo check --target x86_64-pc-windows-msvc --all-targets
+# Echter Build mit Linker (z.B. cargo-xwin) oder auf einem Windows-System:
+cargo build --release
+```
 
 ## License
 
