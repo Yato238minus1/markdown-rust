@@ -62,7 +62,7 @@ pub fn score_stem(stem: &str, query: &str) -> Option<i64> {
             if sc == qc {
                 if first {
                     let at_word_start =
-                        idx == 0 || stem[..idx].ends_with([' ', '-', '_', '/', '.']);
+                        idx == 0 || stem_lower[..idx].ends_with([' ', '-', '_', '/', '.']);
                     if at_word_start {
                         score += 20;
                     } else {

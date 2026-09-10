@@ -160,8 +160,9 @@ impl<'a> SpanBuilder<'a> {
                 _ => {}
             }
             if !matched {
-                self.push(i, i + 1, Tok::Plain);
-                i += 1;
+                let n = self.text[i..end].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+                self.push(i, i + n, Tok::Plain);
+                i += n;
             }
         }
     }

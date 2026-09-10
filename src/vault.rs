@@ -196,7 +196,9 @@ impl Vault {
         let buf = self.buffers.get_mut(&key).ok_or_else(|| {
             io::Error::new(io::ErrorKind::NotFound, "no such open buffer")
         })?;
-        fs::write(&buf.path, &buf.text)?;
+        let tmp = buf.path.with_extension("md.tmp");
+        fs::write(&tmp, &buf.text)?;
+        fs::rename(&tmp, &buf.path)?;
         buf.dirty = false;
         if let Ok(m) = fs::metadata(&buf.path).and_then(|md| md.modified()) {
             self.inhalt_cache
@@ -215,9 +217,7 @@ impl Vault {
         if let Some(parent) = abs.parent() {
             fs::create_dir_all(parent)?;
         }
-        if !abs.exists() {
-            fs::write(&abs, "")?;
-        }
+        if std::fs::OpenOptions::new().write(true).create_new(true).open(&abs).is_ok() {}
         self.scan()?;
         self.open_note(&abs)?;
         Ok(canon(&abs))

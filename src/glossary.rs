@@ -152,6 +152,9 @@ impl Glossar {
         let mut treffer = Vec::new();
 
         for m in self.ac.find_iter(&such_text[..]) {
+            if !text.is_char_boundary(m.start()) || !text.is_char_boundary(m.end()) {
+                continue;
+            }
             // Wortgrenzen prüfen (im Original!)
             let links_ok = m.start() == 0 || !ist_wortzeichen(bytes[m.start() - 1]);
             let rechts_ok = m.end() >= bytes.len() || !ist_wortzeichen(bytes[m.end()]);
@@ -507,7 +510,6 @@ mod glossar_ordner_tests {
     fn glossar_ordner_filtert_notizen() {
         use crate::vault::Vault;
         use std::fs;
-        use std::path::PathBuf;
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::time::{SystemTime, UNIX_EPOCH};
         static N: AtomicUsize = AtomicUsize::new(0);

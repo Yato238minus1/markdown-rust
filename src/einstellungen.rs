@@ -187,6 +187,11 @@ pub struct Einstellungen {
     pub editor_zeilennummern: bool,
     pub editor_zeilenabstand: f32,
 
+    // Vorschau
+    /// Schriftgröße der gerenderten Markdown-Vorschau (Body). Wird auf egui's
+    /// TextStyle::Body/Heading angewendet, damit egui_commonmark sie nutzt.
+    pub vorschau_schriftgroesse: f32,
+
     // Keybinds: (Aktionsschlüssel, Bind)
     pub keybinds: Vec<(String, String)>,
 }
@@ -209,6 +214,7 @@ impl Default for Einstellungen {
             editor_schriftgroesse: 14.0,
             editor_zeilennummern: false,
             editor_zeilenabstand: 1.0,
+            vorschau_schriftgroesse: 14.0,
 
             keybinds: standard_keybinds(),
         }
@@ -328,6 +334,11 @@ impl EinstellungsManager {
             if let Some(v) = map.get("editor_schriftgroesse") {
                 if let Some(x) = v.as_f64() {
                     werte.editor_schriftgroesse = x as f32;
+                }
+            }
+            if let Some(v) = map.get("vorschau_schriftgroesse") {
+                if let Some(x) = v.as_f64() {
+                    werte.vorschau_schriftgroesse = x as f32;
                 }
             }
             if let Some(v) = map.get("glossar_ordner") {
