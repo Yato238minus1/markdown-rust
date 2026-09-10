@@ -53,7 +53,7 @@ mod bug_tests {
 mod rename_tests {
     use rusty_notes::vault::Vault;
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 

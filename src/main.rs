@@ -361,7 +361,17 @@ fn open_vault(root: &str) -> std::io::Result<vault::Vault> {
 // Zenity folder picker (subprocess; no native dialog crates needed)
 // ---------------------------------------------------------------------------
 
-/// Zenity folder picker via subprocess (no native dialog crates needed).
+/// Ordner-Auswahl: unter Windows der native Dateidialog (rfd/Win32),
+/// sonst (Linux/BSD) zenity als leichtgewichtiger Subprozess.
+#[cfg(windows)]
+fn pick_folder_dialog(title: &str) -> Option<String> {
+    rfd::FileDialog::new()
+        .set_title(title)
+        .pick_folder()
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
+#[cfg(not(windows))]
 fn pick_folder_dialog(title: &str) -> Option<String> {
     let _ = title;
     let out = std::process::Command::new("zenity")

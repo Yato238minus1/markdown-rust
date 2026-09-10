@@ -364,7 +364,7 @@ pub fn verschneide(
 #[cfg(test)]
 mod verschneide_tests {
     use super::*;
-    use crate::editor::{self, Span, Tok};
+    use crate::editor::{self, Tok};
 
     fn span(s: usize, e: usize, t: Tok) -> editor::Span {
         editor::Span { start: s, end: e, tok: t }
