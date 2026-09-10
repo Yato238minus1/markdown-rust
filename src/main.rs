@@ -1,3 +1,4 @@
+pub mod editor;
 pub mod markdown;
 pub mod search;
 pub mod vault;
