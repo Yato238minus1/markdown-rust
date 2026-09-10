@@ -41,13 +41,24 @@ pub struct EinstellungsManager {
 }
 
 impl EinstellungsManager {
+    /// Laedt aus der Standard-Datei (nur fuer die echte App verwenden).
     pub fn laden() -> EinstellungsManager {
-        let pfad = datei_pfad();
-        let werte = pfad
-            .and_then(|p| std::fs::read_to_string(p).ok())
+        match datei_pfad() {
+            Some(p) => EinstellungsManager::laden_aus(&p),
+            None => EinstellungsManager::default(),
+        }
+    }
+
+    /// Laedt aus einem beliebigen Pfad (Tests: Temp-Datei, keine echten Daten!).
+    pub fn laden_aus(pfad: &std::path::Path) -> EinstellungsManager {
+        let werte = std::fs::read_to_string(pfad)
+            .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        EinstellungsManager { werte, dirty: false }
+        EinstellungsManager {
+            werte,
+            dirty: false,
+        }
     }
 
     pub fn ist_dirty(&self) -> bool {
@@ -58,22 +69,30 @@ impl EinstellungsManager {
         self.dirty = true;
     }
 
-    /// Schreibt die Datei nur, wenn sich etwas geändert hat.
+    /// Schreibt die Standard-Datei nur, wenn sich etwas geändert hat.
     pub fn speichern_wenn_noetig(&mut self) -> bool {
+        match datei_pfad() {
+            Some(p) => self.speichern_wenn_noetig_nach(&p),
+            None => false,
+        }
+    }
+
+    /// Variante mit explizitem Pfad (Tests: Temp-Datei).
+    pub fn speichern_wenn_noetig_nach(&mut self, pfad: &std::path::Path) -> bool {
         if !self.dirty {
             return false;
         }
         self.dirty = false;
-        if let Some(p) = datei_pfad() {
-            if let Some(parent) = p.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            if let Ok(json) = serde_json::to_string_pretty(&self.werte) {
-                let _ = std::fs::write(p, json);
-                return true;
-            }
+        if let Some(parent) = pfad.parent() {
+            let _ = std::fs::create_dir_all(parent);
         }
-        false
+        match serde_json::to_string_pretty(&self.werte) {
+            Ok(json) => {
+                let _ = std::fs::write(pfad, json);
+                true
+            }
+            Err(_) => false,
+        }
     }
 
     /// Setzt last_vault nur bei tatsächlicher Änderung (kein Dirty-Spam).
@@ -93,11 +112,16 @@ pub fn datei_pfad() -> Option<PathBuf> {
 mod tests {
     use super::*;
 
-    fn tmp_mgr(tag: &str) -> EinstellungsManager {
-        // Wir testen die Logik; Datei-I/O wird über datei_pfad() gemockt,
-        // indem wir dirty-Verhalten ohne Schreiben prüfen.
-        let _ = tag;
-        EinstellungsManager::default()
+    fn tmp_pfad(tag: &str) -> std::path::PathBuf {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("rusty-einst-{}-{}-{}", tag, nanos, n));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("config.json")
     }
 
     #[test]
@@ -111,31 +135,50 @@ mod tests {
 
     #[test]
     fn ohne_aenderung_kein_speichern() {
-        let mut m = tmp_mgr("clean");
+        let pfad = tmp_pfad("clean");
+        let mut m = EinstellungsManager::laden_aus(&pfad);
         assert!(!m.ist_dirty());
-        assert!(!m.speichern_wenn_noetig(), "unveränderte Einstellungen dürfen nicht schreiben");
+        assert!(
+            !m.speichern_wenn_noetig_nach(&pfad),
+            "unveränderte Einstellungen dürfen nicht schreiben"
+        );
+        assert!(!pfad.exists(), "es darf keine Datei angelegt werden");
     }
 
     #[test]
-    fn aenderung_markiert_dirty() {
-        let mut m = tmp_mgr("dirty");
+    fn aenderung_markiert_dirty_und_schreibt_tempdatei() {
+        let pfad = tmp_pfad("dirty");
+        let mut m = EinstellungsManager::laden_aus(&pfad);
         m.markiere_dirty();
         assert!(m.ist_dirty());
-        // Nach speichern_wenn_noetig ist das Flag zurückgesetzt:
-        let _ = m.speichern_wenn_noetig();
+        assert!(m.speichern_wenn_noetig_nach(&pfad), "dirty → muss schreiben");
         assert!(!m.ist_dirty());
+        assert!(pfad.exists());
+    }
+
+    #[test]
+    fn laden_aus_rundtrip() {
+        let pfad = tmp_pfad("roundtrip");
+        let mut m = EinstellungsManager::laden_aus(&pfad);
+        m.werte.glossar_max_treffer = 77;
+        m.markiere_dirty();
+        assert!(m.speichern_wenn_noetig_nach(&pfad));
+
+        let m2 = EinstellungsManager::laden_aus(&pfad);
+        assert_eq!(m2.werte.glossar_max_treffer, 77);
     }
 
     #[test]
     fn last_vault_nur_bei_aenderung_dirty() {
-        let mut m = tmp_mgr("vault");
+        let pfad = tmp_pfad("vault");
+        let mut m = EinstellungsManager::laden_aus(&pfad);
         m.setze_last_vault(None);
         assert!(!m.ist_dirty(), "gleicher Wert (None) → kein Dirty");
 
         m.setze_last_vault(Some("/x".into()));
         assert!(m.ist_dirty(), "neuer Wert → Dirty");
 
-        let _ = m.speichern_wenn_noetig();
+        let _ = m.speichern_wenn_noetig_nach(&pfad);
         m.setze_last_vault(Some("/x".into()));
         assert!(!m.ist_dirty(), "gleicher Wert erneut → kein Dirty");
     }
