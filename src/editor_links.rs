@@ -1,6 +1,5 @@
 //! Editor-Interaktion: Link-Erkennung unter dem Cursor/der Maus.
 
-
 /// Ein Wikilink im Text: Ziel und Byte-Range.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WikiLinkRange {
@@ -29,7 +28,11 @@ pub fn wikilink_at(text: &str, byte_pos: usize) -> Option<WikiLinkRange> {
                 if byte_pos >= open && byte_pos < close {
                     let inner = &text[open + 2..close - 2];
                     let target = inner.split('|').next().unwrap_or(inner).trim().to_string();
-                    return Some(WikiLinkRange { target, start: open, end: close });
+                    return Some(WikiLinkRange {
+                        target,
+                        start: open,
+                        end: close,
+                    });
                 }
                 if open + 2 > byte_pos && open > byte_pos {
                     break; // weiter hinten liegende Links können nicht mehr treffen
@@ -43,20 +46,18 @@ pub fn wikilink_at(text: &str, byte_pos: usize) -> Option<WikiLinkRange> {
     // 2) Markdown-Link [Text](Ziel): '(' kann vor ODER knapp hinter pos liegen,
     // solange pos innerhalb [Text] liegt.
     if byte_pos <= bytes.len() {
-        let paren_opt = text[..byte_pos.min(text.len())]
-            .rfind('(')
-            .or_else(|| {
-                // '(' direkt nach der Klammer?
-                let rest = &text[byte_pos..];
-                if rest.starts_with('(') {
-                    Some(byte_pos)
-                } else {
-                    rest.find('(').map(|p| byte_pos + p).filter(|&p| {
-                        // nur wenn zwischen pos und ( nur Text+']' liegt
-                        text[byte_pos..p].chars().all(|c| c != '\n')
-                    })
-                }
-            });
+        let paren_opt = text[..byte_pos.min(text.len())].rfind('(').or_else(|| {
+            // '(' direkt nach der Klammer?
+            let rest = &text[byte_pos..];
+            if rest.starts_with('(') {
+                Some(byte_pos)
+            } else {
+                rest.find('(').map(|p| byte_pos + p).filter(|&p| {
+                    // nur wenn zwischen pos und ( nur Text+']' liegt
+                    text[byte_pos..p].chars().all(|c| c != '\n')
+                })
+            }
+        });
         if let Some(paren) = paren_opt {
             let paren = paren;
             if paren > 0 && bytes[paren - 1] == b']' {

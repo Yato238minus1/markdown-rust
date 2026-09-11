@@ -135,13 +135,7 @@ fn heading_font(ctx: &egui::Context) -> egui::FontId {
 }
 
 /// Rendered height of `text` using egui's own layout.
-fn measure(
-    ctx: &egui::Context,
-    text: &str,
-    font: &egui::FontId,
-    width: f32,
-    wrap: bool,
-) -> f32 {
+fn measure(ctx: &egui::Context, text: &str, font: &egui::FontId, width: f32, wrap: bool) -> f32 {
     let mut job = egui::text::LayoutJob::default();
     job.wrap.max_width = if wrap { width.max(1.0) } else { f32::INFINITY };
     job.append(
@@ -193,7 +187,10 @@ fn is_table_delimiter(line: &str) -> bool {
 
 fn is_rule(line: &str) -> bool {
     let t: String = line.chars().filter(|c| !c.is_whitespace()).collect();
-    t.len() >= 3 && (t.chars().all(|c| c == '-') || t.chars().all(|c| c == '*') || t.chars().all(|c| c == '_'))
+    t.len() >= 3
+        && (t.chars().all(|c| c == '-')
+            || t.chars().all(|c| c == '*')
+            || t.chars().all(|c| c == '_'))
 }
 
 /// Editor-side map: every raw source line (monospace, wrapped). Empty lines
@@ -238,7 +235,9 @@ pub fn build_preview_map(ctx: &egui::Context, body: &str, content_width: f32) ->
         .text_styles
         .get(&egui::TextStyle::Monospace)
         .cloned()
-        .unwrap_or_else(|| egui::FontId::new((body_size * 0.85).max(11.0), egui::FontFamily::Monospace));
+        .unwrap_or_else(|| {
+            egui::FontId::new((body_size * 0.85).max(11.0), egui::FontFamily::Monospace)
+        });
     // egui_commonmark heading scale (H1 = Heading style .. H6 near body).
     let factors = [1.0, 0.835, 0.668, 0.501, 0.334, 0.167];
     let diff = (heading_size - body_size).max(0.0);
@@ -423,7 +422,14 @@ pub fn build_preview_map(ctx: &egui::Context, body: &str, content_width: f32) ->
                     body_size + diff * factors[lvl]
                 };
                 let text = lines[*line][(*level).min(lines[*line].len())..].trim();
-                y += measure(ctx, text, &egui::FontId::new(size, egui::FontFamily::Proportional), content_width, true).max(row);
+                y += measure(
+                    ctx,
+                    text,
+                    &egui::FontId::new(size, egui::FontFamily::Proportional),
+                    content_width,
+                    true,
+                )
+                .max(row);
             }
             Block::Paragraph { lines: group } => {
                 // Soft breaks render as spaces: measure the paragraph JOINED
@@ -434,13 +440,10 @@ pub fn build_preview_map(ctx: &egui::Context, body: &str, content_width: f32) ->
                 for &li in group.iter() {
                     let (stripped, imgs) = split_images(lines[li]);
                     images += imgs;
-                    parts.push(
-                        stripped.split_whitespace().collect::<Vec<_>>().join(" "),
-                    );
+                    parts.push(stripped.split_whitespace().collect::<Vec<_>>().join(" "));
                 }
                 let full = parts.join(" ");
-                let text_h =
-                    measure(ctx, &full, &font, content_width, true).max(row);
+                let text_h = measure(ctx, &full, &font, content_width, true).max(row);
                 let img_h = images as f32 * image_height(content_width);
                 let total_chars = full.chars().count().max(1) as f32;
                 let mut done = 0usize;
@@ -496,9 +499,7 @@ pub fn build_preview_map(ctx: &egui::Context, body: &str, content_width: f32) ->
                 for &li in group {
                     // Fence markers render as nothing; only content rows count.
                     let t = lines[li].trim_start();
-                    if group.len() > 1
-                        && (t.starts_with("```") || t.starts_with("~~~"))
-                    {
+                    if group.len() > 1 && (t.starts_with("```") || t.starts_with("~~~")) {
                         push_line(&mut entries, li, y);
                         continue;
                     }
@@ -598,7 +599,12 @@ mod tests {
 
     fn assert_monotonic(map: &SyncMap) {
         for w in map.entries.windows(2) {
-            assert!(w[1].1 >= w[0].1, "Y not monotonic: {:?} -> {:?}", w[0], w[1]);
+            assert!(
+                w[1].1 >= w[0].1,
+                "Y not monotonic: {:?} -> {:?}",
+                w[0],
+                w[1]
+            );
         }
         for w in map.entries.windows(2) {
             assert!(w[1].0 >= w[0].0, "bytes not monotonic");
@@ -624,8 +630,7 @@ mod tests {
                             .id_salt(salt)
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
-                                egui_commonmark::CommonMarkViewer::new()
-                                    .show(ui, &mut cache, md);
+                                egui_commonmark::CommonMarkViewer::new().show(ui, &mut cache, md);
                             });
                         real.set(o.content_size.y);
                         inner.set(o.inner_rect.width());
@@ -646,7 +651,12 @@ mod tests {
             let map = build_preview_map(&ctx, md, inner_w);
             let ratio = map.total / real_total.max(1.0);
             assert!(inner_w <= width, "inner {inner_w} > outer {width}");
-            assert!((ratio - 1.0).abs() < 0.05, "w={width}: total off: est {} real {}", map.total, real_total);
+            assert!(
+                (ratio - 1.0).abs() < 0.05,
+                "w={width}: total off: est {} real {}",
+                map.total,
+                real_total
+            );
 
             // Anchor accuracy: real Y of a block start == rendered prefix height.
             // Gaps are leading (emitted with the next block), so a cut that is
@@ -656,11 +666,21 @@ mod tests {
             for line in md.split_inclusive('\n') {
                 if prev_blank && !line.trim().is_empty() && byte > 0 {
                     let (real_y, _) = render_md(&ctx, width, "calib-at", &md[..byte]);
-                    let rest_follows = md[byte..].trim_start_matches('\n').lines().next().is_some_and(|l| !l.trim().is_empty());
+                    let rest_follows = md[byte..]
+                        .trim_start_matches('\n')
+                        .lines()
+                        .next()
+                        .is_some_and(|l| !l.trim().is_empty());
                     let row = single_row(&ctx, &body_font(&ctx));
                     let real_anchor = real_y + if rest_follows { row } else { 0.0 };
                     let est_y = y_for_byte(&map, byte);
-                    assert!((real_anchor - est_y).abs() <= 5.0, "w={width} anchor @{}: est {} real {}", byte, est_y, real_anchor);
+                    assert!(
+                        (real_anchor - est_y).abs() <= 5.0,
+                        "w={width} anchor @{}: est {} real {}",
+                        byte,
+                        est_y,
+                        real_anchor
+                    );
                 }
                 prev_blank = line.trim().is_empty();
                 byte += line.len();
@@ -692,7 +712,12 @@ mod tests {
             );
         });
         out.textures_delta.clear();
-        assert!((real_extra.get() - est_extra).abs() <= 4.0, "fm header: est {} real {}", est_extra, real_extra.get());
+        assert!(
+            (real_extra.get() - est_extra).abs() <= 4.0,
+            "fm header: est {} real {}",
+            est_extra,
+            real_extra.get()
+        );
 
         // Best effort on the real long note (skipped when absent).
         let home = std::env::var("HOME").unwrap_or_default();
@@ -700,7 +725,9 @@ mod tests {
             std::env::var("CARGO_MANIFEST_DIR").unwrap() + "/../rusty-vault/Lange Notiz.md",
             format!("{home}/Documents/rusty-vault/Lange Notiz.md"),
         ];
-        let text = candidates.iter().find_map(|p| std::fs::read_to_string(p).ok());
+        let text = candidates
+            .iter()
+            .find_map(|p| std::fs::read_to_string(p).ok());
         if let Some(text) = text {
             let (_, body) = crate::markdown::split_front_matter(&text);
             for width in [250.0f32, 400.0] {
@@ -708,7 +735,12 @@ mod tests {
                 let (real_total, inner_w) = render_md(&ctx, width, &salt, body);
                 let map = build_preview_map(&ctx, body, inner_w);
                 let ratio = map.total / real_total.max(1.0);
-                assert!((ratio - 1.0).abs() < 0.03, "w={width} long note off: est {} real {}", map.total, real_total);
+                assert!(
+                    (ratio - 1.0).abs() < 0.03,
+                    "w={width} long note off: est {} real {}",
+                    map.total,
+                    real_total
+                );
             }
         }
     }
@@ -742,10 +774,13 @@ mod tests {
         out.textures_delta.clear();
         let map = build_preview_map(&ctx, md, inner.get());
         let ratio = map.total / real.get().max(1.0);
-        assert!((ratio - 1.0).abs() < 0.05, "hidpi off: est {} real {}", map.total, real.get());
+        assert!(
+            (ratio - 1.0).abs() < 0.05,
+            "hidpi off: est {} real {}",
+            map.total,
+            real.get()
+        );
     }
-
-
 
     #[test]
     fn empty_maps_start_at_zero() {
@@ -797,7 +832,12 @@ mod tests {
         let ctx = test_ctx();
         let one = build_preview_map(&ctx, "text\n", 400.0);
         let many = build_preview_map(&ctx, "text\n\n\n\n", 400.0);
-        assert!((many.total - one.total).abs() < 1.0, "{} vs {}", many.total, one.total);
+        assert!(
+            (many.total - one.total).abs() < 1.0,
+            "{} vs {}",
+            many.total,
+            one.total
+        );
     }
 
     #[test]
@@ -806,6 +846,11 @@ mod tests {
         let em = build_editor_map(&ctx, "a\n\nb\n", 14.0, 400.0);
         let row = single_row(&ctx, &egui::FontId::monospace(14.0));
         // 4 source lines (trailing '\n' leaves an empty 4th line, like TextEdit).
-        assert!((em.total - 4.0 * row).abs() < 2.0, "total {}, row {}", em.total, row);
+        assert!(
+            (em.total - 4.0 * row).abs() < 2.0,
+            "total {}, row {}",
+            em.total,
+            row
+        );
     }
 }

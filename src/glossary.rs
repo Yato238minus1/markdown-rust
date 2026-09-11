@@ -185,9 +185,7 @@ impl Glossary {
 type Ranges = Vec<(usize, usize)>;
 
 fn is_protected_hit(bereiche: &Ranges, start: usize, end: usize) -> bool {
-    bereiche
-        .iter()
-        .any(|&(s, e)| start < e && end > s)
+    bereiche.iter().any(|&(s, e)| start < e && end > s)
 }
 
 fn protected_ranges(text: &str) -> Ranges {
@@ -276,10 +274,7 @@ mod tests {
         let gl = g(&[("Rust", "/v/Rust.md")]);
         let hits = gl.find("Lerne Rust heute.");
         assert_eq!(hits.len(), 1);
-        assert_eq!(
-            &"Lerne Rust heute."[hits[0].start..hits[0].end],
-            "Rust"
-        );
+        assert_eq!(&"Lerne Rust heute."[hits[0].start..hits[0].end], "Rust");
         assert_eq!(gl.entries()[0].term, "Rust");
     }
 
@@ -403,13 +398,21 @@ mod verschneide_tests {
     use crate::editor::{self, Tok};
 
     fn span(s: usize, e: usize, t: Tok) -> editor::Span {
-        editor::Span { start: s, end: e, tok: t }
+        editor::Span {
+            start: s,
+            end: e,
+            tok: t,
+        }
     }
 
     #[test]
     fn treffer_in_einem_span_teilen_diesen() {
         let spans = vec![span(0, 10, Tok::Plain)];
-        let hits = vec![GlossaryHit { start: 3, end: 7, index: 0 }];
+        let hits = vec![GlossaryHit {
+            start: 3,
+            end: 7,
+            index: 0,
+        }];
         let out = intersect(&spans, &hits, 10);
         assert_eq!(
             out,
@@ -423,11 +426,12 @@ mod verschneide_tests {
 
     #[test]
     fn treffer_ueber_mehrere_spans() {
-        let spans = vec![
-            span(0, 5, Tok::ListMarker),
-            span(5, 12, Tok::Plain),
-        ];
-        let hits = vec![GlossaryHit { start: 3, end: 8, index: 0 }];
+        let spans = vec![span(0, 5, Tok::ListMarker), span(5, 12, Tok::Plain)];
+        let hits = vec![GlossaryHit {
+            start: 3,
+            end: 8,
+            index: 0,
+        }];
         let out = intersect(&spans, &hits, 12);
         assert_eq!(
             out,
@@ -457,8 +461,16 @@ mod verschneide_tests {
     fn mehrere_treffer_in_einem_span() {
         let spans = vec![span(0, 12, Tok::Plain)];
         let hits = vec![
-            GlossaryHit { start: 1, end: 4, index: 0 },
-            GlossaryHit { start: 7, end: 10, index: 1 },
+            GlossaryHit {
+                start: 1,
+                end: 4,
+                index: 0,
+            },
+            GlossaryHit {
+                start: 7,
+                end: 10,
+                index: 1,
+            },
         ];
         let out = intersect(&spans, &hits, 12);
         assert_eq!(
@@ -514,8 +526,14 @@ mod glossar_ordner_tests {
         use std::time::{SystemTime, UNIX_EPOCH};
         static N: AtomicUsize = AtomicUsize::new(0);
         let n = N.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!("rusty-glossar-{}-{}", 
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(), n));
+        let dir = std::env::temp_dir().join(format!(
+            "rusty-glossar-{}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            n
+        ));
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("Rust.md"), "# Rust").unwrap();
         fs::create_dir_all(dir.join("Glossary")).unwrap();

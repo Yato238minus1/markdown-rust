@@ -7,9 +7,9 @@
 
 use std::sync::LazyLock;
 
-use syntect::parsing::{SyntaxSet, SyntaxReference};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Theme, ThemeSet};
+use syntect::parsing::{SyntaxReference, SyntaxSet};
 use syntect::util::LinesWithEndings;
 
 pub struct CodeHighlighter {
@@ -22,8 +22,15 @@ static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 
 impl Default for CodeHighlighter {
     fn default() -> Self {
-        let theme = THEME_SET.themes.get("base16-ocean.dark").cloned().unwrap_or_default();
-        CodeHighlighter { syntax_set: SYNTAX_SET.clone(), theme }
+        let theme = THEME_SET
+            .themes
+            .get("base16-ocean.dark")
+            .cloned()
+            .unwrap_or_default();
+        CodeHighlighter {
+            syntax_set: SYNTAX_SET.clone(),
+            theme,
+        }
     }
 }
 
@@ -44,7 +51,10 @@ impl CodeHighlighter {
         }
         self.syntax_set
             .find_syntax_by_token(&token.to_lowercase())
-            .or_else(|| self.syntax_set.find_syntax_by_extension(&token.to_lowercase()))
+            .or_else(|| {
+                self.syntax_set
+                    .find_syntax_by_extension(&token.to_lowercase())
+            })
     }
 
     /// Färbt `code` (Sprache via Infostring). Ohne erkannte Sprache: Plain-Farbe.
@@ -56,7 +66,11 @@ impl CodeHighlighter {
                 return if code.is_empty() {
                     Vec::new()
                 } else {
-                    vec![ColorSpan { start: 0, end: code.len(), color: [152, 206, 206, 255] }]
+                    vec![ColorSpan {
+                        start: 0,
+                        end: code.len(),
+                        color: [152, 206, 206, 255],
+                    }]
                 };
             }
         };

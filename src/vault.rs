@@ -131,9 +131,8 @@ impl Vault {
                 }
             }
         }
-        self.content_cache.retain(|p, (mtime, _)| {
-            current.get(p).map(|m| *m <= *mtime).unwrap_or(false)
-        });
+        self.content_cache
+            .retain(|p, (mtime, _)| current.get(p).map(|m| *m <= *mtime).unwrap_or(false));
         Ok(())
     }
 
@@ -144,7 +143,14 @@ impl Vault {
             return Ok(());
         }
         let text = fs::read_to_string(&key)?;
-        self.buffers.insert(key.clone(), Buffer { path: key, text, dirty: false });
+        self.buffers.insert(
+            key.clone(),
+            Buffer {
+                path: key,
+                text,
+                dirty: false,
+            },
+        );
         Ok(())
     }
 
@@ -178,9 +184,10 @@ impl Vault {
     /// Canonical edit path: replaces buffer text and marks it dirty.
     pub fn set_text(&mut self, abs: &Path, text: impl Into<String>) -> io::Result<()> {
         let key = canon(abs);
-        let buf = self.buffers.get_mut(&key).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "no such open buffer")
-        })?;
+        let buf = self
+            .buffers
+            .get_mut(&key)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no such open buffer"))?;
         buf.text = text.into();
         buf.dirty = true;
         // Cache sofort auf den neuen Stand bringen (die Datei ist noch nicht
@@ -193,9 +200,10 @@ impl Vault {
     /// Persist one buffer to disk and clear its dirty flag.
     pub fn save(&mut self, abs: &Path) -> io::Result<()> {
         let key = canon(abs);
-        let buf = self.buffers.get_mut(&key).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "no such open buffer")
-        })?;
+        let buf = self
+            .buffers
+            .get_mut(&key)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no such open buffer"))?;
         let tmp = buf.path.with_extension("md.tmp");
         fs::write(&tmp, &buf.text)?;
         fs::rename(&tmp, &buf.path)?;
@@ -217,7 +225,12 @@ impl Vault {
         if let Some(parent) = abs.parent() {
             fs::create_dir_all(parent)?;
         }
-        if std::fs::OpenOptions::new().write(true).create_new(true).open(&abs).is_ok() {}
+        if std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&abs)
+            .is_ok()
+        {}
         self.scan()?;
         self.open_note(&abs)?;
         Ok(canon(&abs))

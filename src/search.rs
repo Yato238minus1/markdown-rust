@@ -98,13 +98,15 @@ pub fn quick_switcher<'a>(
     let mut candidates: Vec<SwitcherCandidate> = Vec::new();
     for stem in stems {
         if let Some(score) = score_stem(stem, query) {
-            candidates.push(SwitcherCandidate { rel: stem.to_string(), score });
+            candidates.push(SwitcherCandidate {
+                rel: stem.to_string(),
+                score,
+            });
         }
     }
     candidates.sort_by(|a, b| b.score.cmp(&a.score).then(a.rel.cmp(&b.rel)));
     candidates
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -161,7 +163,10 @@ mod tests {
 
     #[test]
     fn scoring_is_case_insensitive_and_rejects_non_matches() {
-        assert_eq!(score_stem("Meeting Notes", "MEET"), score_stem("Meeting Notes", "meet"));
+        assert_eq!(
+            score_stem("Meeting Notes", "MEET"),
+            score_stem("Meeting Notes", "meet")
+        );
         assert!(score_stem("rust", "xyz").is_none());
     }
 

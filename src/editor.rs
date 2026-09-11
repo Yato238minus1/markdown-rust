@@ -23,7 +23,10 @@ impl LineIndex {
                 starts.push(i + 1);
             }
         }
-        LineIndex { starts, len: text.len() }
+        LineIndex {
+            starts,
+            len: text.len(),
+        }
     }
 
     pub fn line_count(&self) -> usize {
@@ -48,7 +51,10 @@ impl LineIndex {
             Ok(i) => i,
             Err(i) => i - 1,
         };
-        LineCol { line, col: byte - self.starts[line] }
+        LineCol {
+            line,
+            col: byte - self.starts[line],
+        }
     }
 }
 
@@ -103,9 +109,7 @@ impl<'a> SpanBuilder<'a> {
             let mut matched = false;
             match b {
                 b'`' => {
-                    if let Some(close) =
-                        self.text[i + 1..end].find('`').map(|p| p + i + 1)
-                    {
+                    if let Some(close) = self.text[i + 1..end].find('`').map(|p| p + i + 1) {
                         self.push(i, close + 1, Tok::InlineCode);
                         i = close + 1;
                         matched = true;
@@ -134,16 +138,18 @@ impl<'a> SpanBuilder<'a> {
                     if b == b'!' && bracket >= end {
                         // fallthrough to plain below
                     } else if bracket + 1 < end && bytes[bracket + 1] == b'[' {
-                        if let Some(close) =
-                            self.text[bracket + 2..end].find("]]").map(|p| p + bracket + 2)
+                        if let Some(close) = self.text[bracket + 2..end]
+                            .find("]]")
+                            .map(|p| p + bracket + 2)
                         {
                             self.push(i, close + 2, Tok::Link);
                             i = close + 2;
                             matched = true;
                         }
                     } else if bracket < end && bytes[bracket] == b'[' {
-                        if let Some(rb) =
-                            self.text[bracket + 1..end].find(']').map(|p| p + bracket + 1)
+                        if let Some(rb) = self.text[bracket + 1..end]
+                            .find(']')
+                            .map(|p| p + bracket + 1)
                         {
                             if rb + 1 < end && bytes[rb + 1] == b'(' {
                                 if let Some(rp) =
@@ -160,7 +166,11 @@ impl<'a> SpanBuilder<'a> {
                 _ => {}
             }
             if !matched {
-                let n = self.text[i..end].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+                let n = self.text[i..end]
+                    .chars()
+                    .next()
+                    .map(|c| c.len_utf8())
+                    .unwrap_or(1);
                 self.push(i, i + n, Tok::Plain);
                 i += n;
             }
@@ -207,7 +217,10 @@ fn is_fence(line: &str) -> bool {
 
 /// Highlight Markdown text into contiguous spans covering [0, text.len()).
 pub fn highlight(text: &str) -> Vec<Span> {
-    let mut sb = SpanBuilder { text, spans: Vec::new() };
+    let mut sb = SpanBuilder {
+        text,
+        spans: Vec::new(),
+    };
 
     // Optional front matter block up front.
     let mut pos = 0usize;
@@ -248,21 +261,17 @@ pub fn highlight(text: &str) -> Vec<Span> {
         } else {
             let indent = line.len() - line.trim_start().len();
             let rest = &line[indent..];
-            let marker_len = if rest.starts_with("- ")
-                || rest.starts_with("* ")
-                || rest.starts_with("+ ")
-            {
-                2
-            } else {
-                let digits = rest.bytes().take_while(|b| b.is_ascii_digit()).count();
-                if digits > 0
-                    && rest[digits..].starts_with(". ")
-                {
-                    digits + 2
+            let marker_len =
+                if rest.starts_with("- ") || rest.starts_with("* ") || rest.starts_with("+ ") {
+                    2
                 } else {
-                    0
-                }
-            };
+                    let digits = rest.bytes().take_while(|b| b.is_ascii_digit()).count();
+                    if digits > 0 && rest[digits..].starts_with(". ") {
+                        digits + 2
+                    } else {
+                        0
+                    }
+                };
             if marker_len > 0 {
                 sb.push(pos, pos + indent + marker_len, Tok::ListMarker);
                 sb.inline(pos + indent + marker_len, line_end);
@@ -288,7 +297,6 @@ pub fn highlight(text: &str) -> Vec<Span> {
 
     sb.spans
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -338,7 +346,11 @@ mod tests {
     fn highlight_recognizes_major_constructs() {
         let text = "# Title\n\n**bold** `code` > not-quote\n- item\n[[Wiki]] plain\n";
         let spans = highlight(text);
-        let has = |t: Tok| spans.iter().any(|s| s.tok == t && &text[s.start..s.end] != "");
+        let has = |t: Tok| {
+            spans
+                .iter()
+                .any(|s| s.tok == t && &text[s.start..s.end] != "")
+        };
         assert!(has(Tok::Heading));
         assert!(has(Tok::BoldItalic));
         assert!(has(Tok::InlineCode));

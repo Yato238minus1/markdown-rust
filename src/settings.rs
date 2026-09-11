@@ -196,7 +196,12 @@ impl Keybind {
         if key.is_empty() {
             return None;
         }
-        Some(Keybind { ctrl, shift, alt, key })
+        Some(Keybind {
+            ctrl,
+            shift,
+            alt,
+            key,
+        })
     }
 }
 
@@ -267,19 +272,58 @@ impl Default for Settings {
 /// Standard-Keybinds (deutsche Belegung, Strg statt Ctrl in der Anzeige).
 pub fn default_keybinds() -> Vec<(String, String)> {
     vec![
-        (Action::OpenFolder.key().into(), Keybind::new(true, false, false, "O").serialize()),
-        (Action::QuickSwitcher.key().into(), Keybind::new(true, false, false, "P").serialize()),
-        (Action::CommandPalette.key().into(), Keybind::new(true, false, false, "K").serialize()),
-        (Action::Save.key().into(), Keybind::new(true, false, false, "S").serialize()),
-        (Action::NewNote.key().into(), Keybind::new(true, false, false, "N").serialize()),
-        (Action::TogglePreview.key().into(), Keybind::new(true, false, false, "E").serialize()),
-        (Action::FocusSearch.key().into(), Keybind::new(true, true, false, "F").serialize()),
-        (Action::OpenSettings.key().into(), Keybind::new(true, true, false, "S").serialize()),
-        (Action::CloseNote.key().into(), Keybind::new(true, false, false, "W").serialize()),
-        (Action::NextNote.key().into(), Keybind::new(true, false, false, "ArrowDown").serialize()),
-        (Action::PrevNote.key().into(), Keybind::new(true, false, false, "ArrowUp").serialize()),
-        (Action::ToggleGlossary.key().into(), Keybind::new(true, true, false, "G").serialize()),
-        (Action::ToggleSyncScroll.key().into(), Keybind::new(true, true, false, "Y").serialize()),
+        (
+            Action::OpenFolder.key().into(),
+            Keybind::new(true, false, false, "O").serialize(),
+        ),
+        (
+            Action::QuickSwitcher.key().into(),
+            Keybind::new(true, false, false, "P").serialize(),
+        ),
+        (
+            Action::CommandPalette.key().into(),
+            Keybind::new(true, false, false, "K").serialize(),
+        ),
+        (
+            Action::Save.key().into(),
+            Keybind::new(true, false, false, "S").serialize(),
+        ),
+        (
+            Action::NewNote.key().into(),
+            Keybind::new(true, false, false, "N").serialize(),
+        ),
+        (
+            Action::TogglePreview.key().into(),
+            Keybind::new(true, false, false, "E").serialize(),
+        ),
+        (
+            Action::FocusSearch.key().into(),
+            Keybind::new(true, true, false, "F").serialize(),
+        ),
+        (
+            Action::OpenSettings.key().into(),
+            Keybind::new(true, true, false, "S").serialize(),
+        ),
+        (
+            Action::CloseNote.key().into(),
+            Keybind::new(true, false, false, "W").serialize(),
+        ),
+        (
+            Action::NextNote.key().into(),
+            Keybind::new(true, false, false, "ArrowDown").serialize(),
+        ),
+        (
+            Action::PrevNote.key().into(),
+            Keybind::new(true, false, false, "ArrowUp").serialize(),
+        ),
+        (
+            Action::ToggleGlossary.key().into(),
+            Keybind::new(true, true, false, "G").serialize(),
+        ),
+        (
+            Action::ToggleSyncScroll.key().into(),
+            Keybind::new(true, true, false, "Y").serialize(),
+        ),
     ]
 }
 
@@ -339,15 +383,10 @@ impl SettingsManager {
         if let Some(serde_json::Value::Object(map)) = file {
             // Field-by-field override (keybinds only when non-empty).
             // Each field accepts its legacy German key so old configs survive.
-            let bool_for = |en: &str, de: &str| {
-                map.get(en).or(map.get(de)).and_then(|v| v.as_bool())
-            };
-            let u64_for = |en: &str, de: &str| {
-                map.get(en).or(map.get(de)).and_then(|v| v.as_u64())
-            };
-            let f64_for = |en: &str, de: &str| {
-                map.get(en).or(map.get(de)).and_then(|v| v.as_f64())
-            };
+            let bool_for =
+                |en: &str, de: &str| map.get(en).or(map.get(de)).and_then(|v| v.as_bool());
+            let u64_for = |en: &str, de: &str| map.get(en).or(map.get(de)).and_then(|v| v.as_u64());
+            let f64_for = |en: &str, de: &str| map.get(en).or(map.get(de)).and_then(|v| v.as_f64());
             if let Some(x) = map.get("autosave_ms").and_then(|v| v.as_u64()) {
                 values.autosave_ms = x;
             }
@@ -381,7 +420,11 @@ impl SettingsManager {
             if let Some(x) = f64_for("preview_font_size", "vorschau_schriftgroesse") {
                 values.preview_font_size = x as f32;
             }
-            if let Some(x) = map.get("sync_scroll").or(map.get("sync_scroll_aktiv")).and_then(|v| v.as_bool()) {
+            if let Some(x) = map
+                .get("sync_scroll")
+                .or(map.get("sync_scroll_aktiv"))
+                .and_then(|v| v.as_bool())
+            {
                 values.sync_scroll = x;
             }
             if let Some(x) = map.get("language").and_then(|v| v.as_str()) {
@@ -413,7 +456,10 @@ impl SettingsManager {
                 }
             }
         }
-        SettingsManager { values, dirty: false }
+        SettingsManager {
+            values,
+            dirty: false,
+        }
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -553,7 +599,8 @@ mod tests {
         m.values.glossary_max_hits = 77;
         m.values.glossary_folders = vec!["Wissen/Glossar".into(), "Begriffe".into()];
         m.values.editor_font_size = 17.5;
-        m.values.set_binding(Action::Save, Some(Keybind::new(false, false, false, "F2")));
+        m.values
+            .set_binding(Action::Save, Some(Keybind::new(false, false, false, "F2")));
         m.mark_dirty();
         assert!(m.save_if_needed_to(&path));
 

@@ -2,10 +2,11 @@
 
 use rusty_notes::{
     code_highlight::CodeHighlighter,
-    settings::{Action, SettingsManager, Settings, Keybind},
     glossary::{self, Glossary},
     i18n::{self, Language, Texts},
-    markdown, preview_sync, search, vault,
+    markdown, preview_sync, search,
+    settings::{Action, Keybind, Settings, SettingsManager},
+    vault,
 };
 
 use std::path::PathBuf;
@@ -400,7 +401,6 @@ impl App {
             self.search_results = search::search_notes(&pairs, &q);
         }
     }
-
 }
 
 const GLOSSARY_COLOR: Color32 = Color32::from_rgb(126, 231, 135); // sattes Grün, deutlich von Link-Blau unterscheiden
@@ -448,7 +448,11 @@ fn pick_folder_dialog(title: &str) -> Option<String> {
     match out {
         Ok(o) if o.status.success() => {
             let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if s.is_empty() { None } else { Some(s) }
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
         }
         _ => None,
     }
@@ -482,13 +486,12 @@ impl eframe::App for App {
 
         // Klick aus der Vorschau: rusty-note:-Schema auf Notizpfad auflösen.
         if let Some(target) = self.pending_link.take() {
-            let target = if let Some(rest) =
-                target.to_str().and_then(|s| s.strip_prefix("rusty-note:"))
-            {
-                self.note_for_wikilink(rest)
-            } else {
-                Some(target)
-            };
+            let target =
+                if let Some(rest) = target.to_str().and_then(|s| s.strip_prefix("rusty-note:")) {
+                    self.note_for_wikilink(rest)
+                } else {
+                    Some(target)
+                };
             match target {
                 Some(path) if path.exists() => self.open_note(path),
                 _ => self.status = txt.status_note_not_found(),
@@ -638,7 +641,8 @@ impl eframe::App for App {
                                                 self.status = txt.status_created(&rel);
                                             }
                                             Err(e) => {
-                                                self.status = txt.status_create_failed(&e.to_string())
+                                                self.status =
+                                                    txt.status_create_failed(&e.to_string())
                                             }
                                         }
                                     }
@@ -649,7 +653,6 @@ impl eframe::App for App {
                     });
                 });
         }
-
 
         // Settings nur bei tatsächlichen Änderungen wegschreiben.
         if self.settings.save_if_needed() {
@@ -669,11 +672,7 @@ impl eframe::App for App {
 
 /// Prüft alle Keybinds aus den Settings gegen den Tastaturzustand.
 /// Aufbau der Lookup-Map: O(Keybinds) pro Frame, Lookup O(1) pro Taste.
-fn check_shortcuts(
-    ctx: &egui::Context,
-    values: &Settings,
-    overlay: &Overlay,
-) -> Option<Action> {
+fn check_shortcuts(ctx: &egui::Context, values: &Settings, overlay: &Overlay) -> Option<Action> {
     if !matches!(overlay, Overlay::None) {
         return None; // Overlays schlucken Shortcuts
     }
@@ -711,20 +710,52 @@ fn char_to_byte(text: &str, char_index: usize) -> usize {
 /// Serialisierter Name eines egui-Keys.
 fn key_name(key: Key) -> &'static str {
     match key {
-        Key::A => "A", Key::B => "B", Key::C => "C", Key::D => "D",
-        Key::E => "E", Key::F => "F", Key::G => "G", Key::H => "H",
-        Key::I => "I", Key::J => "J", Key::K => "K", Key::L => "L",
-        Key::M => "M", Key::N => "N", Key::O => "O", Key::P => "P",
-        Key::Q => "Q", Key::R => "R", Key::S => "S", Key::T => "T",
-        Key::U => "U", Key::V => "V", Key::W => "W", Key::X => "X",
-        Key::Y => "Y", Key::Z => "Z",
-        Key::F1 => "F1", Key::F2 => "F2", Key::F3 => "F3", Key::F4 => "F4",
-        Key::F5 => "F5", Key::F6 => "F6", Key::F7 => "F7", Key::F8 => "F8",
-        Key::F9 => "F9", Key::F10 => "F10", Key::F11 => "F11", Key::F12 => "F12",
-        Key::ArrowDown => "ArrowDown", Key::ArrowUp => "ArrowUp",
-        Key::ArrowLeft => "ArrowLeft", Key::ArrowRight => "ArrowRight",
-        Key::Enter => "Enter", Key::Escape => "Escape",
-        Key::Tab => "Tab", Key::Space => "Space",
+        Key::A => "A",
+        Key::B => "B",
+        Key::C => "C",
+        Key::D => "D",
+        Key::E => "E",
+        Key::F => "F",
+        Key::G => "G",
+        Key::H => "H",
+        Key::I => "I",
+        Key::J => "J",
+        Key::K => "K",
+        Key::L => "L",
+        Key::M => "M",
+        Key::N => "N",
+        Key::O => "O",
+        Key::P => "P",
+        Key::Q => "Q",
+        Key::R => "R",
+        Key::S => "S",
+        Key::T => "T",
+        Key::U => "U",
+        Key::V => "V",
+        Key::W => "W",
+        Key::X => "X",
+        Key::Y => "Y",
+        Key::Z => "Z",
+        Key::F1 => "F1",
+        Key::F2 => "F2",
+        Key::F3 => "F3",
+        Key::F4 => "F4",
+        Key::F5 => "F5",
+        Key::F6 => "F6",
+        Key::F7 => "F7",
+        Key::F8 => "F8",
+        Key::F9 => "F9",
+        Key::F10 => "F10",
+        Key::F11 => "F11",
+        Key::F12 => "F12",
+        Key::ArrowDown => "ArrowDown",
+        Key::ArrowUp => "ArrowUp",
+        Key::ArrowLeft => "ArrowLeft",
+        Key::ArrowRight => "ArrowRight",
+        Key::Enter => "Enter",
+        Key::Escape => "Escape",
+        Key::Tab => "Tab",
+        Key::Space => "Space",
         _ => "Unbekannt",
     }
 }
@@ -732,20 +763,52 @@ fn key_name(key: Key) -> &'static str {
 /// egui-Key aus dem serialisierten Namen.
 fn egui_key(name: &str) -> Option<Key> {
     Some(match name {
-        "A" => Key::A, "B" => Key::B, "C" => Key::C, "D" => Key::D,
-        "E" => Key::E, "F" => Key::F, "G" => Key::G, "H" => Key::H,
-        "I" => Key::I, "J" => Key::J, "K" => Key::K, "L" => Key::L,
-        "M" => Key::M, "N" => Key::N, "O" => Key::O, "P" => Key::P,
-        "Q" => Key::Q, "R" => Key::R, "S" => Key::S, "T" => Key::T,
-        "U" => Key::U, "V" => Key::V, "W" => Key::W, "X" => Key::X,
-        "Y" => Key::Y, "Z" => Key::Z,
-        "F1" => Key::F1, "F2" => Key::F2, "F3" => Key::F3, "F4" => Key::F4,
-        "F5" => Key::F5, "F6" => Key::F6, "F7" => Key::F7, "F8" => Key::F8,
-        "F9" => Key::F9, "F10" => Key::F10, "F11" => Key::F11, "F12" => Key::F12,
-        "ArrowDown" => Key::ArrowDown, "ArrowUp" => Key::ArrowUp,
-        "ArrowLeft" => Key::ArrowLeft, "ArrowRight" => Key::ArrowRight,
-        "Enter" => Key::Enter, "Escape" => Key::Escape,
-        "Tab" => Key::Tab, "Space" => Key::Space,
+        "A" => Key::A,
+        "B" => Key::B,
+        "C" => Key::C,
+        "D" => Key::D,
+        "E" => Key::E,
+        "F" => Key::F,
+        "G" => Key::G,
+        "H" => Key::H,
+        "I" => Key::I,
+        "J" => Key::J,
+        "K" => Key::K,
+        "L" => Key::L,
+        "M" => Key::M,
+        "N" => Key::N,
+        "O" => Key::O,
+        "P" => Key::P,
+        "Q" => Key::Q,
+        "R" => Key::R,
+        "S" => Key::S,
+        "T" => Key::T,
+        "U" => Key::U,
+        "V" => Key::V,
+        "W" => Key::W,
+        "X" => Key::X,
+        "Y" => Key::Y,
+        "Z" => Key::Z,
+        "F1" => Key::F1,
+        "F2" => Key::F2,
+        "F3" => Key::F3,
+        "F4" => Key::F4,
+        "F5" => Key::F5,
+        "F6" => Key::F6,
+        "F7" => Key::F7,
+        "F8" => Key::F8,
+        "F9" => Key::F9,
+        "F10" => Key::F10,
+        "F11" => Key::F11,
+        "F12" => Key::F12,
+        "ArrowDown" => Key::ArrowDown,
+        "ArrowUp" => Key::ArrowUp,
+        "ArrowLeft" => Key::ArrowLeft,
+        "ArrowRight" => Key::ArrowRight,
+        "Enter" => Key::Enter,
+        "Escape" => Key::Escape,
+        "Tab" => Key::Tab,
+        "Space" => Key::Space,
         _ => return None,
     })
 }
@@ -882,110 +945,106 @@ impl App {
         // Exact wrap width, reported by TextEdit itself (no margin guessing).
         let wrap_seen = std::rc::Rc::new(std::cell::Cell::new(0.0f32));
         let wrap_seen_in = wrap_seen.clone();
-        let mut layouter =
-            move |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
-                wrap_seen_in.set(wrap_width);
-                let txt = buf.as_str();
-                let spans = highlight(txt);
-                let pieces: Vec<(usize, usize, glossary::Style)> =
-                    glossary::intersect(&spans, &glossary_hits, txt.len());
-                let mut job = egui::text::LayoutJob::default();
+        let mut layouter = move |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+            wrap_seen_in.set(wrap_width);
+            let txt = buf.as_str();
+            let spans = highlight(txt);
+            let pieces: Vec<(usize, usize, glossary::Style)> =
+                glossary::intersect(&spans, &glossary_hits, txt.len());
+            let mut job = egui::text::LayoutJob::default();
 
-                // Codeblöcke mit syntect einfärben. Dank korrigierter
-                // Fence-Spans ist jeder Block EINE zusammenhängende Span
-                // "```info\n...```". Inhalt = nach erster Zeile bis vor "```".
-                let mut code_colors: Vec<(usize, usize, [u8; 4])> = Vec::new();
-                for s in spans.iter() {
-                    if s.tok != Tok::CodeBlock {
-                        continue;
-                    }
-                    let block = &txt[s.start..s.end];
-                    let Some(line_end) = block.find('\n') else {
-                        continue; // einzeiliger Fence ohne Inhalt
+            // Codeblöcke mit syntect einfärben. Dank korrigierter
+            // Fence-Spans ist jeder Block EINE zusammenhängende Span
+            // "```info\n...```". Inhalt = nach erster Zeile bis vor "```".
+            let mut code_colors: Vec<(usize, usize, [u8; 4])> = Vec::new();
+            for s in spans.iter() {
+                if s.tok != Tok::CodeBlock {
+                    continue;
+                }
+                let block = &txt[s.start..s.end];
+                let Some(line_end) = block.find('\n') else {
+                    continue; // einzeiliger Fence ohne Inhalt
+                };
+                let info = block[3..line_end].trim();
+                // Inhalt: nach Infostring bis vor dem schließenden ``` .
+                // Die Fence-Span endet exakt auf dem schließenden "```" (siehe
+                // editor.rs), also drei Bytes vor block.ende.
+                let fence_end = block.len().saturating_sub(3);
+                let content = &block[line_end + 1..fence_end]
+                    .strip_suffix('\n')
+                    .unwrap_or(&block[line_end + 1..fence_end]);
+                let base = s.start + line_end + 1;
+                if info.is_empty() {
+                    continue; // ohne Sprache: Standardfarbe belassen
+                }
+                for f in CODE_HIGHLIGHTER.highlight(content, info) {
+                    code_colors.push((base + f.start, base + f.end, f.color));
+                }
+            }
+
+            // Stückelung mit Code-Farbgrenzen verschneiden:
+            let mut final_pieces: Vec<(usize, usize, Color32)> = Vec::new();
+            for (s, e, style) in pieces {
+                if style != glossary::Style::Token(Tok::CodeBlock) {
+                    let color = match style {
+                        glossary::Style::Glossary => GLOSSARY_COLOR,
+                        glossary::Style::Token(tok) => tok_color(tok),
                     };
-                    let info = block[3..line_end].trim();
-                    // Inhalt: nach Infostring bis vor dem schließenden ``` .
-                    // Die Fence-Span endet exakt auf dem schließenden "```" (siehe
-                    // editor.rs), also drei Bytes vor block.ende.
-                    let fence_end = block.len().saturating_sub(3);
-                    let content = &block[line_end + 1..fence_end]
-                        .strip_suffix('\n')
-                        .unwrap_or(&block[line_end + 1..fence_end]);
-                    let base = s.start + line_end + 1;
-                    if info.is_empty() {
-                        continue; // ohne Sprache: Standardfarbe belassen
-                    }
-                    for f in CODE_HIGHLIGHTER.highlight(content, info) {
-                        code_colors.push((base + f.start, base + f.end, f.color));
-                    }
+                    final_pieces.push((s, e, color));
+                    continue;
                 }
-
-                // Stückelung mit Code-Farbgrenzen verschneiden:
-                let mut final_pieces: Vec<(usize, usize, Color32)> = Vec::new();
-                for (s, e, style) in pieces {
-                    if style != glossary::Style::Token(Tok::CodeBlock) {
-                        let color = match style {
-                            glossary::Style::Glossary => GLOSSARY_COLOR,
-                            glossary::Style::Token(tok) => tok_color(tok),
-                        };
-                        final_pieces.push((s, e, color));
-                        continue;
+                // CodeBlock-Abschnitt in syntect-Farben zerlegen:
+                let mut cursor = s;
+                while cursor < e {
+                    // Passende Farbspanne am cursor finden:
+                    let mut next_bound = e;
+                    let mut color = tok_color(Tok::CodeBlock);
+                    for (fs, fe, f) in &code_colors {
+                        if *fs <= cursor && cursor < *fe {
+                            color = Color32::from_rgba_unmultiplied(f[0], f[1], f[2], f[3]);
+                            next_bound = (*fe).min(e);
+                            break;
+                        }
                     }
-                    // CodeBlock-Abschnitt in syntect-Farben zerlegen:
-                    let mut cursor = s;
-                    while cursor < e {
-                        // Passende Farbspanne am cursor finden:
-                        let mut next_bound = e;
-                        let mut color = tok_color(Tok::CodeBlock);
-                        for (fs, fe, f) in &code_colors {
-                            if *fs <= cursor && cursor < *fe {
+                    if next_bound == e && color == tok_color(Tok::CodeBlock) {
+                        // cursor liegt zwischen syntect-Spans: bis zur nächsten Spanne
+                        let mut bound = e;
+                        for (fs, _fe, f) in &code_colors {
+                            if *fs > cursor && *fs < bound {
+                                bound = *fs;
                                 color = Color32::from_rgba_unmultiplied(f[0], f[1], f[2], f[3]);
-                                next_bound = (*fe).min(e);
-                                break;
                             }
                         }
-                        if next_bound == e && color == tok_color(Tok::CodeBlock) {
-                            // cursor liegt zwischen syntect-Spans: bis zur nächsten Spanne
-                            let mut bound = e;
-                            for (fs, _fe, f) in &code_colors {
-                                if *fs > cursor && *fs < bound {
-                                    bound = *fs;
-                                    color = Color32::from_rgba_unmultiplied(f[0], f[1], f[2], f[3]);
-                                }
-                            }
-                            next_bound = bound;
-                            if bound == e {
-                                color = tok_color(Tok::CodeBlock);
-                            } else {
-                                // Farbe der kommenden Spanne übernehmen:
-                                for (fs, fe, f) in &code_colors {
-                                    if *fs == bound {
-                                        color = Color32::from_rgba_unmultiplied(f[0], f[1], f[2], f[3]);
-                                        next_bound = (*fe).min(e);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        if next_bound > cursor {
-                            final_pieces.push((cursor, next_bound, color));
-                            cursor = next_bound;
+                        next_bound = bound;
+                        if bound == e {
+                            color = tok_color(Tok::CodeBlock);
                         } else {
-                            break; // Sicherheit gegen Endlosschleife
+                            // Farbe der kommenden Spanne übernehmen:
+                            for (fs, fe, f) in &code_colors {
+                                if *fs == bound {
+                                    color = Color32::from_rgba_unmultiplied(f[0], f[1], f[2], f[3]);
+                                    next_bound = (*fe).min(e);
+                                    break;
+                                }
+                            }
                         }
                     }
+                    if next_bound > cursor {
+                        final_pieces.push((cursor, next_bound, color));
+                        cursor = next_bound;
+                    } else {
+                        break; // Sicherheit gegen Endlosschleife
+                    }
                 }
+            }
 
-                for (s, e, color) in final_pieces {
-                    let fmt = egui::TextFormat::simple(
-                        egui::FontId::monospace(font_size),
-                        color,
-                    );
-                    job.append(&txt[s..e], 0.0, fmt);
-                }
-                job.wrap.max_width = wrap_width;
-                ui.fonts_mut(|f| f.layout_job(job))
-            };
+            for (s, e, color) in final_pieces {
+                let fmt = egui::TextFormat::simple(egui::FontId::monospace(font_size), color);
+                job.append(&txt[s..e], 0.0, fmt);
+            }
+            job.wrap.max_width = wrap_width;
+            ui.fonts_mut(|f| f.layout_job(job))
+        };
 
         let text_len = text.len();
         let editor = egui::TextEdit::multiline(&mut text)
@@ -1034,12 +1093,7 @@ impl App {
                 None => true,
             };
             if rebuild {
-                let map = preview_sync::build_editor_map(
-                    ui.ctx(),
-                    &text,
-                    font_size,
-                    edit_w,
-                );
+                let map = preview_sync::build_editor_map(ui.ctx(), &text, font_size, edit_w);
                 self.editor_map = Some(preview_sync::MapCache {
                     hash: text_hash,
                     width: width_q,
@@ -1230,7 +1284,11 @@ impl App {
                 let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
                 let extra = preview_sync::header_extra_height(&ctx, &refs, avail_w);
                 let map = preview_sync::build_preview_map(&ctx, body, avail_w);
-                let visible = self.preview_map.as_ref().map(|c| c.visible).unwrap_or(600.0);
+                let visible = self
+                    .preview_map
+                    .as_ref()
+                    .map(|c| c.visible)
+                    .unwrap_or(600.0);
                 self.preview_map = Some(preview_sync::MapCache {
                     hash,
                     width: width_q,
@@ -1248,74 +1306,69 @@ impl App {
                 preview_builder = preview_builder.vertical_scroll_offset(target);
             }
         }
-        let scroll_out = preview_builder
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                if let Some(fm) = fm.as_ref() {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.weak(txt.front_matter);
-                        if let Some(title) = fm.title.as_ref() {
-                            ui.label(format!("{} {}", txt.title_label, title));
-                        }
-                        if !fm.tags.is_empty() {
-                            ui.label(format!("{} {}", txt.tags_label, fm.tags.join(", ")));
-                        }
-                    });
-                    ui.separator();
-                }
-                // Wikilinks zu klickbaren Links umschreiben; Ziele als Hooks
-                // registrieren, damit Klicks keine Shell auslösen.
-                let converted = markdown::wikilinks_to_md_links(body);
-                for (target, _) in &target_paths {
-                    self.cache.add_link_hook(format!("rusty-note:{}", target));
-                }
-                egui_commonmark::CommonMarkViewer::new().show(ui, &mut self.cache, &converted);
+        let scroll_out = preview_builder.auto_shrink([false, false]).show(ui, |ui| {
+            if let Some(fm) = fm.as_ref() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.weak(txt.front_matter);
+                    if let Some(title) = fm.title.as_ref() {
+                        ui.label(format!("{} {}", txt.title_label, title));
+                    }
+                    if !fm.tags.is_empty() {
+                        ui.label(format!("{} {}", txt.tags_label, fm.tags.join(", ")));
+                    }
+                });
+                ui.separator();
+            }
+            // Wikilinks zu klickbaren Links umschreiben; Ziele als Hooks
+            // registrieren, damit Klicks keine Shell auslösen.
+            let converted = markdown::wikilinks_to_md_links(body);
+            for (target, _) in &target_paths {
+                self.cache.add_link_hook(format!("rusty-note:{}", target));
+            }
+            egui_commonmark::CommonMarkViewer::new().show(ui, &mut self.cache, &converted);
 
-                // Geklickte Hooks abfragen:
-                for (target, path) in &target_paths {
-                    let schema = format!("rusty-note:{}", target);
-                    if self.cache.get_link_hook(&schema) == Some(true) {
-                        self.cache.remove_link_hook(&schema);
-                        self.pending_link = Some(path.clone());
+            // Geklickte Hooks abfragen:
+            for (target, path) in &target_paths {
+                let schema = format!("rusty-note:{}", target);
+                if self.cache.get_link_hook(&schema) == Some(true) {
+                    self.cache.remove_link_hook(&schema);
+                    self.pending_link = Some(path.clone());
+                }
+            }
+
+            // Klickbare Glossary-Verweise (virtuelle Links dieser Notiz):
+            if let Some(g) = &self.glossary {
+                if self.settings.values.glossary_enabled
+                    && self.settings.values.glossary_preview_list
+                    && !g.is_empty()
+                {
+                    let mut hits = g.find(body);
+                    hits.truncate(self.settings.values.glossary_max_hits);
+                    if !hits.is_empty() {
+                        ui.add_space(6.0);
+                        ui.separator();
+                        ui.weak(txt.glossary_refs_heading);
+                        ui.horizontal_wrapped(|ui| {
+                            // Duplikate nach Eintrags-Index zusammenfassen
+                            let mut seen: Vec<usize> = Vec::new();
+                            for tr in &hits {
+                                if !seen.contains(&tr.index) {
+                                    seen.push(tr.index);
+                                }
+                            }
+                            seen.sort_unstable();
+                            let entries = g.entries();
+                            for idx in seen {
+                                let e = &entries[idx];
+                                if ui.link(egui::RichText::new(&e.term).underline()).clicked() {
+                                    self.pending_link = Some(e.path.clone());
+                                }
+                            }
+                        });
                     }
                 }
-
-                // Klickbare Glossary-Verweise (virtuelle Links dieser Notiz):
-                if let Some(g) = &self.glossary {
-                    if self.settings.values.glossary_enabled
-                        && self.settings.values.glossary_preview_list
-                        && !g.is_empty()
-                    {
-                        let mut hits = g.find(body);
-                        hits.truncate(self.settings.values.glossary_max_hits);
-                        if !hits.is_empty() {
-                            ui.add_space(6.0);
-                            ui.separator();
-                            ui.weak(txt.glossary_refs_heading);
-                            ui.horizontal_wrapped(|ui| {
-                                // Duplikate nach Eintrags-Index zusammenfassen
-                                let mut seen: Vec<usize> = Vec::new();
-                                for tr in &hits {
-                                    if !seen.contains(&tr.index) {
-                                        seen.push(tr.index);
-                                    }
-                                }
-                                seen.sort_unstable();
-                                let entries = g.entries();
-                                for idx in seen {
-                                    let e = &entries[idx];
-                                    if ui
-                                        .link(egui::RichText::new(&e.term).underline())
-                                        .clicked()
-                                    {
-                                        self.pending_link = Some(e.path.clone());
-                                    }
-                                }
-                            });
-                        }
-                    }
-                }
-            });
+            }
+        });
 
         // Viewport geometry for next frame (width stays pre-show stable).
         if let Some(c) = self.preview_map.as_mut() {
@@ -1392,9 +1445,7 @@ impl App {
                                         || (selected && enter)
                                     {
                                         if let Some(v) = self.vault.as_ref() {
-                                            let abs = v
-                                                .root()
-                                                .join(format!("{}.md", cand.rel));
+                                            let abs = v.root().join(format!("{}.md", cand.rel));
                                             self.pending_link = Some(abs);
                                         }
                                         done = true;
@@ -1439,18 +1490,25 @@ impl App {
                             (txt.cmd_focus_search, "focus_search"),
                             (txt.cmd_settings, "open_settings"),
                         ];
-                        let ranked =
-                            search::quick_switcher(commands.iter().map(|(n, _)| *n), &self.switcher_query);
-                        let (enter, esc) = ui.input(|i| {
-                            (i.key_pressed(Key::Enter), i.key_pressed(Key::Escape))
-                        });
+                        let ranked = search::quick_switcher(
+                            commands.iter().map(|(n, _)| *n),
+                            &self.switcher_query,
+                        );
+                        let (enter, esc) =
+                            ui.input(|i| (i.key_pressed(Key::Enter), i.key_pressed(Key::Escape)));
 
                         egui::ScrollArea::vertical()
                             .max_height(260.0)
                             .show(ui, |ui| {
                                 for cand in ranked.iter().take(20) {
                                     if ui.selectable_label(false, &cand.rel).clicked()
-                                        || (enter && cand.rel == ranked.first().map(|c| c.rel.clone()).unwrap_or_default() && !ranked.is_empty())
+                                        || (enter
+                                            && cand.rel
+                                                == ranked
+                                                    .first()
+                                                    .map(|c| c.rel.clone())
+                                                    .unwrap_or_default()
+                                            && !ranked.is_empty())
                                     {
                                         executed = commands
                                             .iter()
@@ -1474,7 +1532,11 @@ impl App {
                     self.overlay = Overlay::CommandPalette;
                 }
             }
-            Overlay::Prompt { title, mut value, action } => {
+            Overlay::Prompt {
+                title,
+                mut value,
+                action,
+            } => {
                 let mut keep_open = true;
                 let mut submitted = false;
                 egui::Window::new(&title)
@@ -1484,13 +1546,11 @@ impl App {
                     .show(&ctx, |ui| {
                         ui.set_min_width(380.0);
                         let resp = ui.add(
-                            egui::TextEdit::singleline(&mut value)
-                                .desired_width(f32::INFINITY),
+                            egui::TextEdit::singleline(&mut value).desired_width(f32::INFINITY),
                         );
                         resp.request_focus();
-                        let (enter, esc) = ui.input(|i| {
-                            (i.key_pressed(Key::Enter), i.key_pressed(Key::Escape))
-                        });
+                        let (enter, esc) =
+                            ui.input(|i| (i.key_pressed(Key::Enter), i.key_pressed(Key::Escape)));
                         ui.add_space(6.0);
                         ui.horizontal(|ui| {
                             if ui.button(txt.ok).clicked() || enter {
@@ -1505,7 +1565,11 @@ impl App {
                     self.run_prompt_action(&action, &value);
                 }
                 self.overlay = if keep_open && !submitted {
-                    Overlay::Prompt { title, value, action }
+                    Overlay::Prompt {
+                        title,
+                        value,
+                        action,
+                    }
                 } else {
                     Overlay::None
                 };
@@ -1580,10 +1644,7 @@ impl App {
                                     &mut draft.glossary_case_insensitive,
                                     txt.set_glossary_ci,
                                 );
-                                ui.checkbox(
-                                    &mut draft.glossary_preview_list,
-                                    txt.show_refs_below,
-                                );
+                                ui.checkbox(&mut draft.glossary_preview_list, txt.show_refs_below);
                                 ui.horizontal(|ui| {
                                     ui.label(txt.set_glossary_max);
                                     ui.add(
@@ -1623,8 +1684,7 @@ impl App {
                                 .num_columns(3)
                                 .spacing([12.0, 4.0])
                                 .show(ui, |ui| {
-                                    let dialog_lang =
-                                        Language::from_code(&draft.language);
+                                    let dialog_lang = Language::from_code(&draft.language);
                                     for action in Action::ALL {
                                         let current = draft
                                             .binding_for(*action)
@@ -1653,14 +1713,52 @@ impl App {
                     let captured = ctx.input(|i| {
                         let mods = i.modifiers;
                         for key in [
-                            Key::A, Key::B, Key::C, Key::D, Key::E, Key::F, Key::G,
-                            Key::H, Key::I, Key::J, Key::K, Key::L, Key::M, Key::N,
-                            Key::O, Key::P, Key::Q, Key::R, Key::S, Key::T, Key::U,
-                            Key::V, Key::W, Key::X, Key::Y, Key::Z,
-                            Key::F1, Key::F2, Key::F3, Key::F4, Key::F5, Key::F6,
-                            Key::F7, Key::F8, Key::F9, Key::F10, Key::F11, Key::F12,
-                            Key::ArrowDown, Key::ArrowUp, Key::ArrowLeft, Key::ArrowRight,
-                            Key::Enter, Key::Escape, Key::Tab, Key::Space,
+                            Key::A,
+                            Key::B,
+                            Key::C,
+                            Key::D,
+                            Key::E,
+                            Key::F,
+                            Key::G,
+                            Key::H,
+                            Key::I,
+                            Key::J,
+                            Key::K,
+                            Key::L,
+                            Key::M,
+                            Key::N,
+                            Key::O,
+                            Key::P,
+                            Key::Q,
+                            Key::R,
+                            Key::S,
+                            Key::T,
+                            Key::U,
+                            Key::V,
+                            Key::W,
+                            Key::X,
+                            Key::Y,
+                            Key::Z,
+                            Key::F1,
+                            Key::F2,
+                            Key::F3,
+                            Key::F4,
+                            Key::F5,
+                            Key::F6,
+                            Key::F7,
+                            Key::F8,
+                            Key::F9,
+                            Key::F10,
+                            Key::F11,
+                            Key::F12,
+                            Key::ArrowDown,
+                            Key::ArrowUp,
+                            Key::ArrowLeft,
+                            Key::ArrowRight,
+                            Key::Enter,
+                            Key::Escape,
+                            Key::Tab,
+                            Key::Space,
                         ] {
                             if i.key_pressed(key) {
                                 return Some((mods, key));
@@ -1704,7 +1802,11 @@ impl App {
                     Overlay::None
                 };
             }
-            Overlay::Confirm { message, action, arg } => {
+            Overlay::Confirm {
+                message,
+                action,
+                arg,
+            } => {
                 let mut keep_open = true;
                 let mut result: Option<bool> = None;
                 egui::Window::new(txt.confirm)
@@ -1730,7 +1832,11 @@ impl App {
                     keep_open = false;
                 }
                 self.overlay = if keep_open {
-                    Overlay::Confirm { message, action, arg }
+                    Overlay::Confirm {
+                        message,
+                        action,
+                        arg,
+                    }
                 } else {
                     Overlay::None
                 };

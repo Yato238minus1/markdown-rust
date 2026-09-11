@@ -5,10 +5,8 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-static FENCE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)```.*?```").unwrap());
-static INLINE_CODE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new("`[^`\n]+`").unwrap());
+static FENCE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)```.*?```").unwrap());
+static INLINE_CODE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new("`[^`\n]+`").unwrap());
 static WIKILINK_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[\[([^\[\]|]+)(?:\|[^\[\]]*)?\]\]").unwrap());
 
@@ -189,7 +187,10 @@ pub fn wikilinks_to_md_links(text: &str) -> String {
             }
             _ => {
                 let start = i;
-                while i < len && bytes[i] != b'`' && !(bytes[i] == b'[' && i + 1 < len && bytes[i + 1] == b'[') {
+                while i < len
+                    && bytes[i] != b'`'
+                    && !(bytes[i] == b'[' && i + 1 < len && bytes[i + 1] == b'[')
+                {
                     i += 1;
                 }
                 out.push_str(&text[start..i.max(start)]);
@@ -223,7 +224,6 @@ pub fn resolve_wikilink<'a>(
         })
         .map(|p| (*p).to_path_buf())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -303,10 +303,16 @@ mod alias_und_wikilink_tests {
     #[test]
     fn aliases_werken_aus_front_matter_gelesen() {
         let fm = parse_front_matter("aliases: [egui, EGUI-Framework]");
-        assert_eq!(fm.aliases, vec!["egui".to_string(), "EGUI-Framework".to_string()]);
+        assert_eq!(
+            fm.aliases,
+            vec!["egui".to_string(), "EGUI-Framework".to_string()]
+        );
 
         let fm2 = parse_front_matter("aliases:\n  - Erster\n  - Zweiter");
-        assert_eq!(fm2.aliases, vec!["Erster".to_string(), "Zweiter".to_string()]);
+        assert_eq!(
+            fm2.aliases,
+            vec!["Erster".to_string(), "Zweiter".to_string()]
+        );
     }
 
     #[test]
@@ -318,7 +324,11 @@ mod alias_und_wikilink_tests {
     fn wikilinks_werden_zu_klickbaren_md_links() {
         let text = "Siehe [[Rust GUI Notes]] und [[Rust|die Sprache]].";
         let out = wikilinks_to_md_links(text);
-        assert!(out.contains("[Rust GUI Notes](<rusty-note:Rust GUI Notes>)"), "{}", out);
+        assert!(
+            out.contains("[Rust GUI Notes](<rusty-note:Rust GUI Notes>)"),
+            "{}",
+            out
+        );
         assert!(out.contains("[die Sprache](<rusty-note:Rust>)"), "{}", out);
         assert!(!out.contains("[["));
     }
